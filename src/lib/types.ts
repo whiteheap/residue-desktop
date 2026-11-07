@@ -216,6 +216,8 @@ export interface AppInfo {
   home: string;
   path_source: "login_shell" | "fallback";
   dev_service_preview: boolean;
+  /** `residue remove --keep-trash` when none is given: `7d`. */
+  default_keep_trash: string;
 }
 
 export interface Settings {
@@ -224,15 +226,55 @@ export interface Settings {
   suggested: string[];
 }
 
+/** One `residue watch` setting, as residue takes it: `1h`, `2d`, `10`. */
+export interface WatchSetting {
+  value: string;
+  /** The service does not set it: residue's default. */
+  default: boolean;
+}
+
+/** Whether `residue watch` fetches, so it sees a branch deleted on the remote. */
+export type WatchFetch =
+  | { mode: "every"; value: string; default: boolean }
+  | { mode: "off" }
+  /** The binary is older than `since`, so it never fetches. */
+  | { mode: "never"; since: string; every: string }
+  /** The binary's version, and so whether it fetches, is unknown. */
+  | { mode: "unknown"; since: string; every: string };
+
+export interface WatchSettings {
+  grace: WatchSetting;
+  idle: WatchSetting;
+  min_free: WatchSetting;
+  fetch: WatchFetch;
+  keep_trash: WatchSetting;
+}
+
 export interface ServiceProgram {
   binary: string;
   binary_exists: boolean;
   version: string | null;
   managed: boolean;
   roots: string[];
+  /** The options a save passes on, as written. */
   options: string[];
   dry_run: boolean;
+  /** Arguments the app does not know; while there are any, it does not save. */
   unknown: string[];
+  settings: WatchSettings;
+}
+
+/** What turning the service on, or saving other folders, installs. */
+export interface ServicePlan {
+  binary: string;
+  version: string | null;
+  managed: boolean;
+  /** The running service's options, passed on as written. Empty when it is off. */
+  keep: string[];
+  /** What the service does after the save. */
+  settings: WatchSettings;
+  /** Why the app will not save, when it will not. */
+  blocked: string | null;
 }
 
 export interface ServiceStatus {
@@ -245,6 +287,7 @@ export interface ServiceStatus {
   log_lines: string[];
   log_error: string | null;
   program: ServiceProgram | null;
+  plan: ServicePlan;
   dev_dry_run: boolean;
 }
 
@@ -253,4 +296,13 @@ export interface ServiceChange {
   output: string[];
   dev_dry_run: boolean;
   status: ServiceStatus;
+}
+
+/** `residue watch --once --dry-run`, which removes nothing. */
+export interface ServicePreview {
+  command: string;
+  lines: string[];
+  /** Options of the service the preview did not pass. */
+  left_out: string[];
+  left_out_reason: string | null;
 }

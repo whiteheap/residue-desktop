@@ -5,8 +5,17 @@ import { useState } from "react";
 import { Command, ErrorPanel, Loading, PageHeader, SolidButton, Toggle } from "../components/ui";
 import { api, asCliError } from "../lib/api";
 import { shellWord, tilde } from "../lib/format";
-import type { AppInfo, CliError, ServiceChange, ServiceStatus } from "../lib/types";
+import type {
+  AppInfo,
+  CliError,
+  ServiceChange,
+  ServicePlan,
+  ServicePreview,
+  ServiceProgram,
+  ServiceStatus,
+} from "../lib/types";
 import { useCli } from "../lib/useCli";
+import { diskLow, duration, fetchWords, settingFlags, settingLines } from "../lib/watch";
 
 export function Automatic({
   info,
@@ -101,11 +110,19 @@ export function Automatic({
                     <dd>log only (--dry-run): it records what it would remove and removes nothing</dd>
                   </div>
                 ) : null}
-                {program.options.length > 0 || program.unknown.length > 0 ? (
+                {program.options.length > 0 ? (
                   <div>
                     <dt>Options</dt>
                     <dd>
-                      <code>{[...program.options, ...program.unknown].join(" ")}</code>
+                      <code>{program.options.join(" ")}</code>
+                    </dd>
+                  </div>
+                ) : null}
+                {program.unknown.length > 0 ? (
+                  <div>
+                    <dt>Not known to the app</dt>
+                    <dd>
+                      <code>{program.unknown.join(" ")}</code>
                     </dd>
                   </div>
                 ) : null}
@@ -137,7 +154,7 @@ export function Automatic({
           </section>
         ) : null}
 
-        <WhatItRemoves />
+        {status ? <WhatItRemoves on={on} program={program} plan={status.plan} /> : null}
 
         {status ? (
           <section className="block">
@@ -174,15 +191,18 @@ export function Automatic({
         </section>
       </div>
 
-      {dialog === "on" ? (
+      {dialog === "on" && status ? (
         <TurnOnDialog
-          initial={program?.roots.length ? program.roots : roots.length ? roots : suggested}
+          initial={on && program?.roots.length ? program.roots : roots.length ? roots : suggested}
           suggested={suggested}
           home={home}
-          replacing={on}
-          initialDryRun={program?.dry_run ?? false}
+          current={on ? program : null}
+          plan={status.plan}
+          bundled={info?.residue_version ?? null}
+          initialDryRun={on ? (program?.dry_run ?? false) : false}
           onClose={() => setDialog(null)}
           onChanged={changed}
+          onFailed={load}
         />
       ) : null}
       {dialog === "off" ? <TurnOffDialog onClose={() => setDialog(null)} onChanged={changed} /> : null}
@@ -190,28 +210,54 @@ export function Automatic({
   );
 }
 
-function WhatItRemoves() {
+/** What the service does, from its arguments; when it is off, what turning it on installs. */
+function WhatItRemoves({
+  on,
+  program,
+  plan,
+}: {
+  on: boolean;
+  program: ServiceProgram | null;
+  plan: ServicePlan;
+}) {
+  const running = on && program ? program : null;
+  const settings = running ? running.settings : plan.settings;
+  const version = running ? running.version : plan.version;
+  const low = diskLow(settings);
+  const { set, defaults } = settingFlags(settings);
   return (
     <section className="block what">
       <h2>
-        <Info aria-hidden /> What it removes
+        <Info aria-hidden /> {running ? "What it removes" : "What it would remove"}
       </h2>
       <ul className="plain-list bullets">
         <li>
           A worktree whose work landed: its upstream branch was deleted, as merging a pull request
-          with branch deletion does, and the worktree has not changed for an hour. residue never
-          fetches; it notices after your next git fetch --prune.
+          with branch deletion does, and the worktree has not changed for{" "}
+          {duration(settings.grace.value)}. {fetchWords(settings.fetch, version)}
         </li>
         <li>
-          When a disk is below 10% free: worktrees unchanged for two days, largest first, until
-          15% is free.
+          When a disk is below {low.below} free: worktrees unchanged for{" "}
+          {duration(settings.idle.value)}, largest first, until {low.until} is free.
         </li>
       </ul>
       <p>
         Every check runs before each removal, so a worktree with changes, untracked files or a
         running process stays. Automatic cleanup deletes the worktree instead of using the trash,
         because freeing the disk is its job. The branch and its commits stay, and a locked worktree
-        stays. It also deletes trash entries older than 7 days.
+        stays. In each repository it removes from, it also deletes trash entries older than{" "}
+        {duration(settings.keep_trash.value)}, residue's default --keep-trash.
+      </p>
+      <p className="hint">
+        {running
+          ? set.length > 0
+            ? `From the service's arguments: ${set.join(", ")}.`
+            : "The service sets no options."
+          : set.length > 0
+            ? `Turning it on keeps ${set.join(", ")}.`
+            : "Turning it on starts from residue's defaults."}
+        {defaults.length > 0 ? ` residue's defaults, where it sets none: ${defaults.join(", ")}.` : ""}
+        {running ? "" : ` It would run ${version ?? "a residue of unknown version"}.`}
       </p>
     </section>
   );
@@ -221,27 +267,41 @@ function TurnOnDialog({
   initial,
   suggested,
   home,
-  replacing,
+  current,
+  plan,
+  bundled,
   initialDryRun,
   onClose,
   onChanged,
+  onFailed,
 }: {
   initial: string[];
   suggested: string[];
   home: string | undefined;
-  replacing: boolean;
+  /** The running service, which a save replaces. */
+  current: ServiceProgram | null;
+  plan: ServicePlan;
+  /** `residue --version` of the bundled binary, which runs the preview. */
+  bundled: string | null;
   initialDryRun: boolean;
   onClose: () => void;
   onChanged: (c: ServiceChange) => void;
+  /** A save failed: read the service again, since it may have changed. */
+  onFailed: () => void;
 }) {
   const [options, setOptions] = useState<string[]>(() => [...new Set([...initial, ...suggested])]);
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(initial));
   const [dryRun, setDryRun] = useState(initialDryRun);
   const [working, setWorking] = useState<"preview" | "install" | null>(null);
-  const [previewLines, setPreviewLines] = useState<string[] | null>(null);
+  const [previewed, setPreviewed] = useState<ServicePreview | null>(null);
   const [error, setError] = useState<CliError | null>(null);
 
+  const replacing = current !== null;
   const roots = options.filter((o) => chosen.has(o));
+  const settings = plan.settings;
+  const low = diskLow(settings);
+  const changes = replacing ? changedSettings(current, plan) : [];
+  const fetches = settings.fetch.mode === "every";
 
   const add = async () => {
     const picked = await openDialog({ directory: true, multiple: true, title: "Folders to watch" });
@@ -249,7 +309,7 @@ function TurnOnDialog({
     if (list.length === 0) return;
     setOptions((o) => [...new Set([...o, ...list])]);
     setChosen((c) => new Set([...c, ...list]));
-    setPreviewLines(null);
+    setPreviewed(null);
   };
 
   const toggle = (root: string, on: boolean) => {
@@ -259,14 +319,14 @@ function TurnOnDialog({
       else next.delete(root);
       return next;
     });
-    setPreviewLines(null);
+    setPreviewed(null);
   };
 
   const preview = async () => {
     setWorking("preview");
     setError(null);
     try {
-      setPreviewLines(await api.servicePreview(roots));
+      setPreviewed(await api.servicePreview(roots));
     } catch (e) {
       setError(asCliError(e));
     } finally {
@@ -278,10 +338,11 @@ function TurnOnDialog({
     setWorking("install");
     setError(null);
     try {
-      onChanged(await api.serviceInstall(roots, dryRun));
+      onChanged(await api.serviceInstall(roots, dryRun, plan.keep));
     } catch (e) {
       setError(asCliError(e));
       setWorking(null);
+      onFailed();
     }
   };
 
@@ -299,8 +360,9 @@ function TurnOnDialog({
         </Dialog.Title>
         <Dialog.Description className="dialog-text">
           residue watch starts now and at every login. It deletes a worktree in the folders below
-          when its upstream branch is gone and it has not changed for an hour, or when the disk is
-          below 10% free and it has not changed for two days. Every check runs first. It deletes
+          when its upstream branch is gone and it has not changed for{" "}
+          {duration(settings.grace.value)}, or when the disk is below {low.below} free and it has
+          not changed for {duration(settings.idle.value)}. Every check runs first. It deletes
           instead of using the trash; branches and commits stay.
         </Dialog.Description>
 
@@ -325,6 +387,50 @@ function TurnOnDialog({
           onCheckedChange={(on) => setDryRun(on === true)}
         />
 
+        <section className="plan-section" aria-labelledby="save-settings">
+          <h3 id="save-settings">{replacing ? "What a save keeps" : "Settings"}</h3>
+          <dl className="facts">
+            <div>
+              <dt>Runs</dt>
+              <dd>
+                <code>{tilde(plan.binary, home)}</code>
+                {plan.version ? ` (${plan.version})` : " (version unknown)"}
+                {plan.managed ? ", the app's own copy, kept outside the app" : ""}
+              </dd>
+            </div>
+            <div>
+              <dt>Options</dt>
+              <dd>
+                {plan.keep.length > 0 ? (
+                  <>
+                    <code>{plan.keep.join(" ")}</code>, kept from the service as written
+                  </>
+                ) : replacing ? (
+                  "the service sets none, so residue's defaults apply"
+                ) : (
+                  "residue's defaults"
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Fetching</dt>
+              <dd>{fetchWords(settings.fetch, plan.version)}</dd>
+            </div>
+            {changes.length > 0 ? (
+              <div>
+                <dt>Changes</dt>
+                <dd>{changes.join("; ")}</dd>
+              </div>
+            ) : null}
+          </dl>
+          {plan.blocked ? (
+            <p className="notice" role="alert">
+              <strong className="warn">Saving is off. </strong>
+              {plan.blocked}
+            </p>
+          ) : null}
+        </section>
+
         <section className="plan-section">
           <div className="plan-section-head">
             <h3>What it would remove right now</h3>
@@ -339,13 +445,30 @@ function TurnOnDialog({
               Preview
             </Button>
           </div>
-          {previewLines ? (
-            <pre className="log full" aria-label="Preview">
-              {previewLines.length > 0 ? previewLines.join("\n") : "Nothing to remove right now."}
-            </pre>
+          {previewed ? (
+            <>
+              <pre className="log full" aria-label="Preview">
+                {previewed.lines.length > 0 ? previewed.lines.join("\n") : "Nothing to remove right now."}
+              </pre>
+              {previewed.left_out.length > 0 ? (
+                <p className="hint">
+                  Left out: {previewed.left_out.join(" ")} ({previewed.left_out_reason}).
+                </p>
+              ) : null}
+            </>
           ) : (
-            <p className="hint">Runs residue watch --once --dry-run on these folders. It removes nothing.</p>
+            <p className="hint">
+              Runs residue watch --once --dry-run on these folders with these settings, using the
+              residue {bundled ? `${bundled} ` : ""}inside the app. It removes nothing.
+            </p>
           )}
+          {fetches ? (
+            <p className="hint">
+              The preview does not fetch, while the service fetches before its first pass. The
+              service can also remove a worktree whose branch was deleted on the remote and is not
+              yet pruned here.
+            </p>
+          ) : null}
         </section>
 
         {error ? <ErrorPanel title="residue did not finish" error={error} /> : null}
@@ -356,7 +479,7 @@ function TurnOnDialog({
           </Button>
           <SolidButton
             loading={working === "install"}
-            disabled={working !== null || roots.length === 0}
+            disabled={working !== null || roots.length === 0 || plan.blocked !== null}
             onClick={install}
           >
             {replacing ? "Save" : "Turn on"}
@@ -365,6 +488,15 @@ function TurnOnDialog({
       </Dialog>
     </Dialog.Root>
   );
+}
+
+/** The settings a save changes, as `Fetching: never -> about every 30 minutes`. */
+function changedSettings(current: ServiceProgram, plan: ServicePlan): string[] {
+  const before = settingLines(current.settings, current.version);
+  const after = settingLines(plan.settings, plan.version);
+  return Object.keys(after)
+    .filter((k) => before[k] !== after[k])
+    .map((k) => `${k}: ${before[k]} → ${after[k]}`);
 }
 
 function TurnOffDialog({ onClose, onChanged }: { onClose: () => void; onChanged: (c: ServiceChange) => void }) {

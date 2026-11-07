@@ -7,8 +7,9 @@ import { api } from "../lib/api";
 import { age, baseName, bytes, grouped, shortHead, tilde } from "../lib/format";
 import type { CheckStatus, Check as ResidueCheck, Worktree } from "../lib/types";
 import { documentTime, useCli } from "../lib/useCli";
-import { VERDICT_HELP, branchLabel, checkLabel, displayPath, keptBy } from "../lib/worktree";
+import { VERDICT_HELP, branchLabel, checkLabel, displayPath, keptBy, known, verdictHelp } from "../lib/worktree";
 
+// A status a newer residue adds gets the question mark and its own name.
 const STATUS_ICON: Record<CheckStatus, typeof Check> = { pass: Check, block: X, unknown: Question };
 const STATUS_LABEL: Record<CheckStatus, string> = { pass: "pass", block: "keeps it", unknown: "not finished" };
 
@@ -146,12 +147,12 @@ export function Detail({
               <h2>Checks</h2>
               <ul className="checks">
                 {checksFirstBlocking(w.checks).map((c) => {
-                  const Icon = STATUS_ICON[c.status];
+                  const Icon = known(STATUS_ICON, c.status) ?? Question;
                   return (
                     <li key={c.id} className="check" data-status={c.status}>
                       <Icon className="check-icon" weight="bold" aria-hidden />
                       <span className="check-name">{checkLabel(c.id)}</span>
-                      <span className="visually-hidden">{STATUS_LABEL[c.status]}</span>
+                      <span className="visually-hidden">{known(STATUS_LABEL, c.status) ?? c.status}</span>
                       <span className="check-detail">
                         <Words text={c.detail} />
                       </span>
@@ -224,10 +225,16 @@ export function Detail({
 function verdictText(w: Worktree): string {
   if (w.verdict === "stale") return w.stale_reason ?? VERDICT_HELP.stale;
   const kept = keptBy(w).map((c) => checkLabel(c.id).toLowerCase());
-  if (w.verdict === "candidate" || kept.length === 0) return VERDICT_HELP[w.verdict];
-  return w.verdict === "keep"
-    ? `Kept by: ${kept.join(", ")}. It stays until every check passes.`
-    : `Could not finish: ${kept.join(", ")}. residue keeps it until every check can run.`;
+  if (w.verdict === "keep" && kept.length > 0) {
+    return `Kept by: ${kept.join(", ")}. It stays until every check passes.`;
+  }
+  if (w.verdict === "unknown" && kept.length > 0) {
+    return `Could not finish: ${kept.join(", ")}. residue keeps it until every check can run.`;
+  }
+  return (
+    verdictHelp(w.verdict) ??
+    `residue's verdict is "${w.verdict}", which this version of the app does not know.`
+  );
 }
 
 /** The checks that keep it come first; otherwise residue's order. */

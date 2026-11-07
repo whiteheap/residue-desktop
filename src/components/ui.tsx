@@ -2,11 +2,16 @@ import { Button, Loader } from "@cloudflare/kumo";
 import { Check, Copy, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { CliError, Verdict } from "../lib/types";
-import { VERDICT_HELP, VERDICT_LABEL } from "../lib/worktree";
+import { verdictHelp, verdictLabel } from "../lib/worktree";
 
-/** The one filled button on a screen: white on black. */
+/**
+ * The one filled button on a screen: white on black. The secondary variant
+ * colors a disabled label `!text-kumo-default/70`, light on this light fill,
+ * so the label keeps its own color and Kumo's `disabled:opacity-50` alone
+ * shows that it is off.
+ */
 export const SOLID =
-  "!bg-kumo-contrast !text-kumo-inverse !ring-kumo-contrast not-disabled:hover:!bg-kumo-contrast/85";
+  "!bg-kumo-contrast !text-kumo-inverse disabled:!text-kumo-inverse !ring-kumo-contrast not-disabled:hover:!bg-kumo-contrast/85";
 
 export function SolidButton(props: ComponentProps<typeof Button>) {
   return <Button variant="secondary" {...props} className={`${SOLID} ${props.className ?? ""}`} />;
@@ -14,8 +19,8 @@ export function SolidButton(props: ComponentProps<typeof Button>) {
 
 export function VerdictTag({ verdict, id }: { verdict: Verdict; id?: string }) {
   return (
-    <span className="verdict" id={id} data-verdict={verdict} title={VERDICT_HELP[verdict]}>
-      {VERDICT_LABEL[verdict]}
+    <span className="verdict" id={id} data-verdict={verdict} title={verdictHelp(verdict)}>
+      {verdictLabel(verdict)}
     </span>
   );
 }

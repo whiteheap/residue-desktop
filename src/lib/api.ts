@@ -8,6 +8,7 @@ import type {
   RestoreDocument,
   ScanDocument,
   ServiceChange,
+  ServicePreview,
   ServiceStatus,
   Settings,
 } from "./types";
@@ -46,8 +47,9 @@ export const api = {
   restore: (entryPath: string, root: string) =>
     call<RestoreDocument>("restore", { entryPath, root }),
   serviceStatus: () => call<ServiceStatus>("service_status"),
-  serviceInstall: (roots: string[], dryRun: boolean) =>
-    call<ServiceChange>("service_install", { roots, dryRun }),
+  /** `keep` is the plan's options the window showed; a changed service refuses. */
+  serviceInstall: (roots: string[], dryRun: boolean, keep: string[]) =>
+    call<ServiceChange>("service_install", { roots, dryRun, keep }),
   serviceUninstall: () => call<ServiceChange>("service_uninstall"),
-  servicePreview: (roots: string[]) => call<string[]>("service_preview", { roots }),
+  servicePreview: (roots: string[]) => call<ServicePreview>("service_preview", { roots }),
 };

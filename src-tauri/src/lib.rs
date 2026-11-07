@@ -113,6 +113,9 @@ struct AppInfo {
     home: String,
     path_source: env::PathSource,
     dev_service_preview: bool,
+    /// `residue remove --keep-trash` when none is given, which the app's
+    /// removals and automatic cleanup use.
+    default_keep_trash: &'static str,
 }
 
 #[tauri::command]
@@ -127,6 +130,7 @@ async fn app_info(app: tauri::AppHandle, state: AppState<'_>) -> Result<AppInfo,
             home: s.home.to_string_lossy().into_owned(),
             path_source: env::path().1,
             dev_service_preview: s.dev.enabled,
+            default_keep_trash: service::DEFAULT_KEEP_TRASH,
         })
     })
     .await
@@ -303,18 +307,21 @@ async fn service_status(state: AppState<'_>) -> Result<service::Status, CliError
     .await
 }
 
+/// Turn the service on, or save other folders. `keep` is the options the
+/// window showed a save would keep (`Status.plan.keep`); when the service
+/// changed since, nothing is installed.
 #[tauri::command]
 async fn service_install(
     state: AppState<'_>,
     roots: Vec<String>,
     dry_run: bool,
+    keep: Vec<String>,
 ) -> Result<service::Change, CliError> {
     blocking(&state, move |s| {
         let roots = settings::folders(&roots)?;
         let version = s.bundled_version()?;
         let ctx = s.service_context(&version);
-        let current = service::status(&ctx, &s.dev)?;
-        service::install(&ctx, &s.dev, &roots, dry_run, current.program.as_ref())
+        service::install(&ctx, &s.dev, &roots, dry_run, &keep)
     })
     .await
 }
@@ -328,21 +335,19 @@ async fn service_uninstall(state: AppState<'_>) -> Result<service::Change, CliEr
     .await
 }
 
-/// `residue watch --once --dry-run ROOT...`: what automatic cleanup would
-/// remove now. It removes nothing.
+/// `residue watch --once --dry-run ROOT...` with the options a save keeps:
+/// what automatic cleanup would remove now. It removes nothing.
 #[tauri::command]
-async fn service_preview(state: AppState<'_>, roots: Vec<String>) -> Result<Vec<String>, CliError> {
+async fn service_preview(
+    state: AppState<'_>,
+    roots: Vec<String>,
+) -> Result<service::Preview, CliError> {
     blocking(&state, move |s| {
         let roots = settings::folders(&roots)?;
         let version = s.bundled_version()?;
         let ctx = s.service_context(&version);
         let current = service::status(&ctx, &s.dev)?;
-        let options = current
-            .program
-            .filter(|p| p.unknown.is_empty())
-            .map(|p| p.options)
-            .unwrap_or_default();
-        service::preview(&ctx, &roots, &options)
+        service::preview(&ctx, &roots, &current.plan.keep)
     })
     .await
 }

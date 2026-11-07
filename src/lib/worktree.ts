@@ -32,8 +32,27 @@ export const CHECK_LABEL: Record<string, string> = {
   idle: "Idle",
 };
 
+/**
+ * `map[key]` for a key from residue's document, which a newer residue can
+ * send without this app knowing it. Undefined for such a key, and for a name
+ * every object inherits (`constructor`), so a lookup never yields a value the
+ * window cannot render.
+ */
+export function known<T>(map: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
 export function checkLabel(id: string): string {
-  return CHECK_LABEL[id] ?? id;
+  return known(CHECK_LABEL, id) ?? id;
+}
+
+/** The verdict in words; one this app does not know shows as residue wrote it. */
+export function verdictLabel(verdict: string): string {
+  return known(VERDICT_LABEL, verdict) ?? verdict;
+}
+
+export function verdictHelp(verdict: string): string | undefined {
+  return known(VERDICT_HELP, verdict);
 }
 
 /** The checks that keep it: residue's own words for each. */

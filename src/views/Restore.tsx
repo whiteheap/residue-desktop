@@ -6,6 +6,7 @@ import { api, asCliError } from "../lib/api";
 import { ageOf, baseName, bytes, shortBranch, tilde } from "../lib/format";
 import type { CliError, Listing, Restorable } from "../lib/types";
 import { documentTime, useCli } from "../lib/useCli";
+import { duration } from "../lib/watch";
 
 /** Everything the listings return, once each. */
 function restorables(listings: Listing[]): Restorable[] {
@@ -35,11 +36,14 @@ function restorables(listings: Listing[]): Restorable[] {
 export function Restore({
   roots,
   home,
+  keepTrash,
   refreshKey,
   onRestored,
 }: {
   roots: string[];
   home: string | undefined;
+  /** residue's default `--keep-trash` (`7d`), which the app's removals use. */
+  keepTrash: string | undefined;
   refreshKey: number;
   onRestored: () => void;
 }) {
@@ -166,9 +170,12 @@ export function Restore({
             </ul>
             {items.length > 0 ? (
               <p className="hint">
-                A trashed worktree still takes its disk space. residue deletes an entry for good
-                when it is older than 7 days, during the next removal or automatic cleanup in its
-                repository.
+                A trashed worktree still takes its disk space. The next removal or automatic
+                cleanup in its repository deletes the entries older than its --keep-trash for good
+                {keepTrash
+                  ? `: ${duration(keepTrash)}, residue's default, which the app and automatic cleanup use`
+                  : ""}
+                .
               </p>
             ) : null}
           </>

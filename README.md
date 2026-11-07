@@ -45,7 +45,7 @@ Replace `vX.Y.Z` with the release's tag. The attestation shows that this reposit
 | Automatic cleanup | Turns residue's watch service on or off, with a plain summary before you confirm, its status and recent log lines |
 | Folders | The folders to scan. The usual code folders in your home folder (`~/Work`, `~/src`, `~/code` and others) are offered first |
 
-Removal always uses residue's trash (`residue remove --trash`): a worktree stays restorable until residue deletes trash entries older than 7 days, during a later removal or automatic cleanup in that repository. The branch and its commits always stay. Automatic cleanup is residue's own `residue watch` service, which deletes instead of using the trash; the app says so before you turn it on.
+Removal always uses residue's trash (`residue remove --trash`): a worktree stays restorable until a later removal or automatic cleanup in that repository deletes the trash entries older than `--keep-trash`, which neither the app nor automatic cleanup sets, so residue's default applies: 7 days. The branch and its commits always stay. Automatic cleanup is residue's own `residue watch` service, which deletes instead of using the trash; the app says so before you turn it on.
 
 ## Automatic cleanup and the residue binary
 
@@ -57,6 +57,8 @@ The service records the absolute path of the binary that installed it, so the ap
 2. otherwise a copy of the app's residue at `~/Library/Application Support/com.whiteheap.residue-desktop/bin/residue`, which stays when the app moves or is deleted.
 
 The Automatic cleanup screen shows which binary the service runs and the command that turns it off from a terminal. Deleting the app leaves the service running.
+
+What the screen says the service does comes from the service's own arguments and the version of the binary it runs, which `brew upgrade` can change without the app: residue 0.0.6 never fetches, and 0.0.7 and newer fetch about every 30 minutes unless the service has `--no-fetch`. Where the service sets no option, the screen shows residue's default and says it is one. Saving other folders keeps the service's options as written (`--idle 7d`, `--no-fetch`), and the dialog lists them before you save. If the service has an argument the app does not know, the app does not save, because saving would drop that argument. Change the service from a terminal instead, or turn it off and on to start from residue's defaults.
 
 To use residue from a terminal too:
 
@@ -94,9 +96,10 @@ pnpm tauri build --ci --target universal-apple-darwin
 
 ### Development builds
 
-Two environment variables change what a debug build (`pnpm tauri dev`) does. Release builds ignore both.
+These environment variables change what a debug build (`pnpm tauri dev`) does. Release builds ignore them.
 
 - `RESIDUE_DESKTOP_DEV_SERVICE=preview`: the Automatic cleanup switch never runs `residue service install` or `uninstall`. launchd acts on your real login session, and the service label is shared with any residue service already running, so a real install or uninstall would replace or remove it. In preview the switch shows the command it would run and the output of `residue watch --once --dry-run`, which removes nothing. Use it whenever you work on that screen on a machine that runs residue's service.
+- `RESIDUE_DESKTOP_DEV_AGENT_FILE=PLIST`, with the preview on: the preview starts as if `PLIST` were the installed service, so you can see how the screen reads a service another residue version wrote. The app only reads the file. Make one in a temporary folder with `plutil -create xml1 PLIST` and `plutil -insert ProgramArguments -json '["/opt/homebrew/bin/residue","watch","--no-fetch","/tmp/x"]' PLIST`.
 - `RESIDUE_DESKTOP_DEV_SNAPSHOT_DIR=DIR`: write a name into `DIR/request` and the app saves a picture of its window to `DIR/NAME.tiff`, for checking the UI from a terminal that macOS does not allow to record the screen. `sips -s format png DIR/NAME.tiff --out DIR/NAME.png` converts it.
 
 ## Release

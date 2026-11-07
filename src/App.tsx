@@ -7,6 +7,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@cloudflare/kumo";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Mark } from "./components/Mark";
 import { ErrorPanel, Loading } from "./components/ui";
 import { api } from "./lib/api";
@@ -167,36 +168,56 @@ export function App() {
           <div className="page-body">
             <Loading title="Starting" />
           </div>
-        ) : view === "worktrees" ? (
-          detail ? (
-            <Detail path={detail} home={home} onBack={() => setDetail(null)} onRemove={setRemoving} />
-          ) : (
-            <Worktrees
-              doc={scanDoc}
-              error={scanQ.error}
-              scanning={scanQ.loading}
-              roots={roots}
-              home={home}
-              selected={selected}
-              onSelect={select}
-              onRescan={rescan}
-              onOpen={setDetail}
-              onRemove={setRemoving}
-              onChooseFolders={() => go("folders")}
-            />
-          )
-        ) : view === "restore" ? (
-          <Restore roots={roots} home={home} refreshKey={refreshKey} onRestored={rescan} />
-        ) : view === "automatic" ? (
-          <Automatic
-            info={info ?? null}
-            roots={roots}
-            suggested={settings.suggested}
-            home={home}
-            refreshKey={refreshKey}
-          />
         ) : (
-          <Folders settings={settings} home={home} onSaved={setSaved} />
+          // A new screen starts without the last one's failure.
+          <ErrorBoundary
+            key={`${view}:${detail ?? ""}`}
+            actions={
+              detail || view !== "worktrees" ? (
+                <Button variant="secondary" onClick={() => (detail ? setDetail(null) : go("worktrees"))}>
+                  Back to Worktrees
+                </Button>
+              ) : null
+            }
+          >
+            {view === "worktrees" ? (
+              detail ? (
+                <Detail path={detail} home={home} onBack={() => setDetail(null)} onRemove={setRemoving} />
+              ) : (
+                <Worktrees
+                  doc={scanDoc}
+                  error={scanQ.error}
+                  scanning={scanQ.loading}
+                  roots={roots}
+                  home={home}
+                  selected={selected}
+                  onSelect={select}
+                  onRescan={rescan}
+                  onOpen={setDetail}
+                  onRemove={setRemoving}
+                  onChooseFolders={() => go("folders")}
+                />
+              )
+            ) : view === "restore" ? (
+              <Restore
+                roots={roots}
+                home={home}
+                keepTrash={info?.default_keep_trash}
+                refreshKey={refreshKey}
+                onRestored={rescan}
+              />
+            ) : view === "automatic" ? (
+              <Automatic
+                info={info ?? null}
+                roots={roots}
+                suggested={settings.suggested}
+                home={home}
+                refreshKey={refreshKey}
+              />
+            ) : (
+              <Folders settings={settings} home={home} onSaved={setSaved} />
+            )}
+          </ErrorBoundary>
         )}
       </main>
 
