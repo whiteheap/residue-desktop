@@ -1,0 +1,31 @@
+[package]
+name = "residue-desktop"
+version = "0.1.0"
+description = "Desktop app for residue: see and reclaim the storage Git worktrees take"
+authors = ["Whiteheap"]
+license = "MIT"
+repository = "https://github.com/whiteheap/residue-desktop"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[lib]
+name = "residue_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+tauri = { version = "=2.12.5", features = [] }
+tauri-plugin-dialog = "=2.8.3"
+tauri-plugin-opener = "=2.7.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

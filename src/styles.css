@@ -1,0 +1,66 @@
+@source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
+@import "@cloudflare/kumo/styles/tailwind";
+@import "tailwindcss";
+
+/* Whiteheap: black, white and grays, IBM Plex Mono. No color accent. */
+@theme {
+  --font-sans: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    min-width: 0;
+  }
+
+  :root {
+    color-scheme: dark;
+    --bg: oklch(0 0 none);
+    --fg: oklch(0.97 0 none);
+    --muted: oklch(0.72 0 none);
+    --faint: oklch(0.56 0 none);
+    --line: oklch(0.26 0 none);
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+    text-wrap: pretty;
+    overflow-wrap: break-word;
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    margin: 0;
+    block-size: 100dvh;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  button,
+  [role="button"] {
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  :focus-visible {
+    outline: max(2px, 0.08em) solid currentColor;
+    outline-offset: 0.25em;
+  }
+}
