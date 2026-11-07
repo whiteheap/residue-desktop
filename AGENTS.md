@@ -1,3 +1,5 @@
+> This repository is archived. The app is now `app/` in [whiteheap/residue](https://github.com/whiteheap/residue): change it there, under that repository's `AGENTS.md`.
+
 # Agent guide
 
 residue desktop is a Tauri 2 app over the [residue](https://github.com/whiteheap/residue) CLI: Rust in `src-tauri/`, React and TypeScript in `src/` (Kumo components, Phosphor icons, Tailwind 4). The README is the user contract. This file is for agents changing the code.
