@@ -22,8 +22,8 @@ On a machine that runs residue's service, its user's data and service are not te
 - Remove and restore only in scratch repositories you create in a temporary folder. A scan of real folders only reads, and is fine for a realistic overview.
 - To see the UI from a terminal that cannot record the screen, run `pnpm tauri dev` with `RESIDUE_DESKTOP_DEV_SNAPSHOT_DIR=DIR` and write a name into `DIR/request` (README, "Development builds").
 
-Then run what CI runs (README, "Checks"). A change to the release workflow is proved by its dry run on your branch (README, "Release"), which publishes nothing.
+Then run what CI runs (README, "Checks"). A change to the release workflow is proved by the dry run its pull request starts (README, "Release"), which publishes nothing.
 
 ## Release
 
-README, "Release". Only a `v*` tag pushed from `main` publishes; a manual run is always a dry run.
+README, "Release". Only a `v*` tag pushed from `main` publishes; a manual run and a pull request run are dry runs.

@@ -112,7 +112,7 @@ Two environment variables change what a debug build (`pnpm tauri dev`) does. Rel
 
 The workflow does the rest. `.github/workflows/release.yml` checks that the tag matches the version and points into `main`, builds the universal app, checks its ad-hoc signature, architectures and launch from the mounted DMG, attests the DMG's build provenance, and publishes the release with `Residue-macos-universal.dmg` and `SHA256SUMS`. The notes are `.github/release-notes.md` followed by the pull requests since the last release. A tag with a hyphen (`v1.2.0-rc.1`) is published as a prerelease and never becomes the latest release that the download link serves.
 
-To check a change to the workflow without publishing anything, run it by hand on your branch. That dry run does every step but the release and keeps the DMG as an artifact:
+A pull request that changes `release.yml` runs it as a dry run: every step but the release, with the DMG kept as the run's `Residue-macos-universal` artifact. To dry-run any branch by hand:
 
 ```sh
 gh workflow run release.yml --ref BRANCH

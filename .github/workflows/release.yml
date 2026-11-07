@@ -7,13 +7,19 @@ name: release
 #   SHA256SUMS. The asset name never changes, so
 #   https://github.com/whiteheap/residue-desktop/releases/latest/download/Residue-macos-universal.dmg
 #   always serves the newest release.
-# - A manual run (workflow_dispatch, any branch) is a dry run: it builds,
-#   checks and attests, keeps the DMG as an artifact, and publishes nothing.
+# - A manual run (workflow_dispatch, any branch) and a pull request that
+#   changes this file are dry runs: they build, check and attest, keep the DMG
+#   as an artifact, and publish nothing. GitHub starts a manual run only for a
+#   workflow that is on main, so the pull request run proves a change first.
+#   A pull request from a fork gets no id-token, so its attest job fails.
 #
 # README.md, "Release", has the steps.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
@@ -125,8 +131,8 @@ jobs:
           if-no-files-found: error
 
   # Attests the DMG the build uploaded, on a fresh runner that runs no
-  # third-party build code. A dry run attests too: its attestation names the
-  # branch, never a tag, so `gh attestation verify --source-ref refs/tags/...`
+  # third-party build code. A dry run attests too: its attestation names a
+  # branch or pull request, never a tag, so `--source-ref refs/tags/...`
   # does not accept it.
   attest:
     needs: build
