@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The README's how-it-works chart (light palette). Source of how-it-works.png: run
+  sh docs/assets/render.sh. how-it-works-dark.svg is the same drawing in the dark
+  palette: change both together, and the alt text in README.md with them.
+
+  Every fact here comes from the code: the folders from src-tauri/src/settings.rs,
+  each read and when it runs from src/App.tsx and src/views/, its command from
+  src-tauri/src/lib.rs and service.rs, the labels from src/lib/worktree.ts,
+  the plan from src/views/RemoveDialog.tsx, and the defaults from the DEFAULT_
+  constants in service.rs. residue-cli's own chart draws the checks, and what
+  a removal does, in full.
+
+  Drawn 480 px wide with no text under 14 px, so a phone that shows it about
+  320 px wide still shows every word at about 10 px.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 1804" width="480" height="1804" role="img" aria-labelledby="how-it-works-title how-it-works-desc" xml:space="preserve">
+  <title id="how-it-works-title">How the residue Mac app reads your worktrees, moves them to the trash, and brings them back</title>
+  <desc id="how-it-works-desc">Chart, top to bottom. Your code folders: the app scans the folders you pick in Folders; until you save some, the usual code folders that exist, such as ~/src. What the window reads: the window shows what residue reports, and no read changes a worktree. Worktrees: scan --json FOLDERS, each worktree's size and verdict. Checks: explain --json PATH, each check and its result. Restore: restore --json, in each folder, for trash entries and removal records. Automatic cleanup: service status, and Preview: watch --once --dry-run, which fetches and removes nothing. Freed: stats --json, residue's ledger. The verdicts: can go (all passed), kept (blocked), unknown (unfinished) and stale (gone). Each verdict and size is residue's own. The window reads at launch, when you open a screen and when you ask, never on a timer. An arrow: one that can go, for the trash or watch. What it changes, when you ask. Move to the trash: 1, you select worktrees that can go; 2, remove --trash --json PATHS, the plan: without --yes it moves and purges nothing; 3, you click Move N worktrees to the trash; 4, the same, with --yes and exactly the planned paths: residue checks each again and keeps any that changed. The plan lists the worktrees it moves and keeps, the trash entries over 7 days old it purges, and the removal records it forgets. Restore: you click Restore, restore --json ENTRY, for one trash entry or removal record. Automatic cleanup: service install FOLDERS, or uninstall: the launchd agent that runs residue watch. On its own, watch removes one that can go when work landed (its upstream branch is gone, unchanged for --grace, 1h) or when the disk is low (free space under --min-free, 10%; unchanged for --idle, 2d, largest first). It deletes instead of using the trash. A save reads the service again: if it changed, the save installs nothing. Arrows to two boxes. Trash entry, at least 7 days (--keep-trash): from Move to the trash. Restore puts it back whole. It frees no disk until it is purged into a removal record. Removal record, at least 30 days (--keep-removed): from a purge, or from automatic cleanup. Restore recreates it at its path, on its branch and HEAD, but not its ignored files. What it never touches. Branches, commits and stashes: residue never deletes one. A worktree that is kept, unknown or stale: you can select only the ones that can go. The network: the app makes no request of its own; watch and Preview fetch from your remotes, unless --no-fetch.</desc>
+  <rect x="0.5" y="0.5" width="479" height="1803" rx="11.5" fill="#fafafa" stroke="#e5e5e5"/>
+  <g font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace">
+    <!-- 1. What the app scans -->
+    <rect x="20.5" y="20.5" width="439" height="114" rx="8" fill="#ffffff" stroke="#dedede"/>
+    <text x="36" y="50.6" font-size="17" font-weight="500" fill="#0a0a0a">Your code folders</text>
+    <text x="36" y="74.5" font-size="15" fill="#4f4f4f">The app scans the folders you pick in</text>
+    <text x="36" y="95.5" font-size="15" fill="#4f4f4f"><tspan fill="#0a0a0a">Folders</tspan>; until you save some, the usual</text>
+    <text x="36" y="116.5" font-size="15" fill="#4f4f4f">code folders that exist, such as <tspan fill="#0a0a0a">~/src</tspan>.</text>
+    <path d="M240 135V158" stroke="#8f8f8f" stroke-width="1.5" fill="none"/><path d="M235 157L240 165L245 157Z" fill="#8f8f8f"/>
+    <!-- 2. What each screen reads, and when -->
+    <rect x="20.5" y="165.5" width="439" height="448" rx="8" fill="#ffffff" stroke="#dedede"/>
+    <text x="36" y="195.6" font-size="17" font-weight="500" fill="#0a0a0a">What the window reads</text>
+    <text x="36" y="219.5" font-size="15" fill="#4f4f4f">The window shows what residue reports,</text>
+    <text x="36" y="240.5" font-size="15" fill="#4f4f4f">and no read changes a worktree.</text>
+    <text x="36" y="267.5" font-size="15" font-weight="500" fill="#0a0a0a">Worktrees</text>
+    <text x="168" y="266.1" font-size="14" fill="#0a0a0a">scan --json FOLDERS</text>
+    <text x="168" y="285.1" font-size="14" fill="#4f4f4f">each worktree's size and verdict</text>
+    <text x="36" y="312.5" font-size="15" font-weight="500" fill="#0a0a0a">Checks</text>
+    <text x="168" y="311.1" font-size="14" fill="#0a0a0a">explain --json PATH</text>
+    <text x="168" y="330.1" font-size="14" fill="#4f4f4f">each check and its result</text>
+    <text x="36" y="357.5" font-size="15" font-weight="500" fill="#0a0a0a">Restore</text>
+    <text x="168" y="356.1" font-size="14" fill="#4f4f4f"><tspan fill="#0a0a0a">restore --json</tspan>, in each folder</text>
+    <text x="168" y="375.1" font-size="14" fill="#4f4f4f">trash entries, removal records</text>
+    <text x="36" y="402.5" font-size="15" font-weight="500" fill="#0a0a0a">Automatic</text>
+    <text x="36" y="423.5" font-size="15" font-weight="500" fill="#0a0a0a">cleanup</text>
+    <text x="168" y="401.1" font-size="14" fill="#4f4f4f"><tspan fill="#0a0a0a">service status</tspan>, and Preview:</text>
+    <text x="168" y="420.1" font-size="14" fill="#4f4f4f"><tspan fill="#0a0a0a">watch --once --dry-run</tspan>, which</text>
+    <text x="168" y="439.1" font-size="14" fill="#4f4f4f">fetches and removes nothing</text>
+    <text x="36" y="466.5" font-size="15" font-weight="500" fill="#0a0a0a">Freed</text>
+    <text x="168" y="465.1" font-size="14" fill="#4f4f4f"><tspan fill="#0a0a0a">stats --json</tspan>: residue's ledger</text>
+    <rect x="36.5" y="480.5" width="95" height="51" rx="6" fill="#0a0a0a" stroke="#0a0a0a"/><text x="84" y="500.5" font-size="15" font-weight="500" text-anchor="middle" fill="#ffffff">can go</text><text x="84" y="520.1" font-size="14" text-anchor="middle" fill="#ffffff">all passed</text><rect x="140.5" y="480.5" width="95" height="51" rx="6" fill="#f6f6f6" stroke="#e2e2e2"/><text x="188" y="500.5" font-size="15" font-weight="500" text-anchor="middle" fill="#0a0a0a">kept</text><text x="188" y="520.1" font-size="14" text-anchor="middle" fill="#4f4f4f">blocked</text><rect x="244.5" y="480.5" width="95" height="51" rx="6" fill="#f6f6f6" stroke="#e2e2e2"/><text x="292" y="500.5" font-size="15" font-weight="500" text-anchor="middle" fill="#0a0a0a">unknown</text><text x="292" y="520.1" font-size="14" text-anchor="middle" fill="#4f4f4f">unfinished</text><rect x="348.5" y="480.5" width="95" height="51" rx="6" fill="#f6f6f6" stroke="#e2e2e2"/><text x="396" y="500.5" font-size="15" font-weight="500" text-anchor="middle" fill="#0a0a0a">stale</text><text x="396" y="520.1" font-size="14" text-anchor="middle" fill="#4f4f4f">gone</text>
+    <text x="36" y="558.1" font-size="14" fill="#4f4f4f">Each verdict and size is residue's own. The</text>
+    <text x="36" y="577.1" font-size="14" fill="#4f4f4f">window reads at launch, when you open a</text>
+    <text x="36" y="596.1" font-size="14" fill="#4f4f4f">screen and when you ask, never on a timer.</text>
+    <path d="M84 614V647" stroke="#8f8f8f" stroke-width="1.5" fill="none"/><path d="M79 646L84 654L89 646Z" fill="#8f8f8f"/>
+    <text x="98" y="636.1" font-size="14" fill="#6b6b6b">one that can go, for the trash or watch</text>
+    <!-- 3. What the app changes, each only when you ask -->
+    <rect x="20.5" y="654.5" width="439" height="652" rx="8" fill="#ffffff" stroke="#dedede"/>
+    <text x="36" y="684.6" font-size="17" font-weight="500" fill="#0a0a0a">What it changes, when you ask</text>
+    <rect x="36.5" y="700.5" width="407" height="242" rx="6" fill="#f6f6f6" stroke="#e2e2e2"/>
+    <text x="46" y="727.5" font-size="15" font-weight="500" fill="#0a0a0a">Move to the trash</text>
+    <text x="46" y="747.1" font-size="14" fill="#6b6b6b">1</text><text x="62" y="747.1" font-size="14" fill="#4f4f4f">you select worktrees that can go</text>
+    <text x="46" y="766.1" font-size="14" fill="#6b6b6b">2</text><text x="62" y="766.1" font-size="14" fill="#4f4f4f"><tspan fill="#0a0a0a">remove --trash --json PATHS</tspan>, the plan:</text>
+    <text x="62" y="785.1" font-size="14" fill="#4f4f4f">without <tspan fill="#0a0a0a">--yes</tspan> it moves and purges nothing</text>
+    <text x="46" y="804.1" font-size="14" fill="#6b6b6b">3</text><text x="62" y="804.1" font-size="14" fill="#4f4f4f">you click <tspan fill="#0a0a0a">Move N worktrees to the trash</tspan></text>
+    <text x="46" y="823.1" font-size="14" fill="#6b6b6b">4</text><text x="62" y="823.1" font-size="14" fill="#4f4f4f">the same, with <tspan fill="#0a0a0a">--yes</tspan> and exactly the</text>
+    <text x="62" y="842.1" font-size="14" fill="#4f4f4f">planned paths: residue checks each again</text>
+    <text x="62" y="861.1" font-size="14" fill="#4f4f4f">and keeps any that changed</text>
+    <text x="46" y="888.1" font-size="14" fill="#4f4f4f">The plan lists the worktrees it moves and</text>
+    <text x="46" y="907.1" font-size="14" fill="#4f4f4f">keeps, the trash entries over 7 days old it</text>
+    <text x="46" y="926.1" font-size="14" fill="#4f4f4f">purges, and the removal records it forgets.</text>
+    <rect x="36.5" y="954.5" width="407" height="82" rx="6" fill="#f6f6f6" stroke="#e2e2e2"/>
+    <text x="46" y="981.5" font-size="15" font-weight="500" fill="#0a0a0a">Restore</text>
+    <text x="46" y="1001.1" font-size="14" fill="#4f4f4f">you click <tspan fill="#0a0a0a">Restore</tspan>: <tspan fill="#0a0a0a">restore --json ENTRY</tspan>,</text>
+    <text x="46" y="1020.1" font-size="14" fill="#4f4f4f">for one trash entry or removal record</text>
+    <rect x="36.5" y="1048.5" width="407" height="242" rx="6" fill="#f6f6f6" stroke="#e2e2e2"/>
+    <text x="46" y="1075.5" font-size="15" font-weight="500" fill="#0a0a0a">Automatic cleanup</text>
+    <text x="46" y="1095.1" font-size="14" fill="#4f4f4f"><tspan fill="#0a0a0a">service install FOLDERS</tspan>, or <tspan fill="#0a0a0a">uninstall</tspan>:</text>
+    <text x="46" y="1114.1" font-size="14" fill="#4f4f4f">the launchd agent that runs <tspan fill="#0a0a0a">residue watch</tspan>.</text>
+    <text x="46" y="1133.1" font-size="14" fill="#4f4f4f">On its own, watch removes one that can go:</text>
+    <rect x="46.5" y="1144.5" width="6" height="6" fill="none" stroke="#4f4f4f"/><text x="60" y="1152.1" font-size="14" fill="#4f4f4f">work landed: its upstream branch is gone,</text>
+    <text x="60" y="1171.1" font-size="14" fill="#4f4f4f">unchanged for <tspan fill="#0a0a0a">--grace</tspan> (1h)</text>
+    <rect x="46.5" y="1182.5" width="6" height="6" fill="none" stroke="#4f4f4f"/><text x="60" y="1190.1" font-size="14" fill="#4f4f4f">disk low: free space under <tspan fill="#0a0a0a">--min-free</tspan> (10%);</text>
+    <text x="60" y="1209.1" font-size="14" fill="#4f4f4f">unchanged for <tspan fill="#0a0a0a">--idle</tspan> (2d), largest first</text>
+    <text x="46" y="1228.1" font-size="14" fill="#0a0a0a">It deletes instead of using the trash.</text>
+    <text x="46" y="1255.1" font-size="14" fill="#4f4f4f">A save reads the service again: if it</text>
+    <text x="46" y="1274.1" font-size="14" fill="#4f4f4f">changed, the save installs nothing.</text>
+    <!-- 4. What comes back, and for how long -->
+    <path d="M135 1307V1330" stroke="#8f8f8f" stroke-width="1.5" fill="none"/><path d="M130 1329L135 1337L140 1329Z" fill="#8f8f8f"/>
+    <path d="M345 1307V1330" stroke="#8f8f8f" stroke-width="1.5" fill="none"/><path d="M340 1329L345 1337L350 1329Z" fill="#8f8f8f"/>
+    <rect x="20.5" y="1337.5" width="205" height="210" rx="8" fill="#ffffff" stroke="#dedede"/>
+    <text x="34" y="1365.5" font-size="15" font-weight="500" fill="#0a0a0a">Trash entry</text>
+    <text x="34" y="1388.5" font-size="15" font-weight="500" fill="#0a0a0a">at least 7 days</text>
+    <text x="34" y="1408.1" font-size="14" fill="#0a0a0a">--keep-trash</text>
+    <text x="34" y="1435.1" font-size="14" fill="#4f4f4f">from Move to the</text>
+    <text x="34" y="1454.1" font-size="14" fill="#4f4f4f">trash. Restore puts</text>
+    <text x="34" y="1473.1" font-size="14" fill="#4f4f4f">it back whole. It</text>
+    <text x="34" y="1492.1" font-size="14" fill="#0a0a0a">frees no disk until</text>
+    <text x="34" y="1511.1" font-size="14" fill="#4f4f4f"><tspan fill="#0a0a0a">it is purged</tspan> into a</text>
+    <text x="34" y="1530.1" font-size="14" fill="#4f4f4f">removal record</text>
+    <rect x="254.5" y="1337.5" width="205" height="210" rx="8" fill="#ffffff" stroke="#dedede"/>
+    <text x="268" y="1365.5" font-size="15" font-weight="500" fill="#0a0a0a">Removal record</text>
+    <text x="268" y="1388.5" font-size="15" font-weight="500" fill="#0a0a0a">at least 30 days</text>
+    <text x="268" y="1408.1" font-size="14" fill="#0a0a0a">--keep-removed</text>
+    <text x="268" y="1435.1" font-size="14" fill="#4f4f4f">from a purge, or from</text>
+    <text x="268" y="1454.1" font-size="14" fill="#4f4f4f">automatic cleanup.</text>
+    <text x="268" y="1473.1" font-size="14" fill="#4f4f4f">Restore recreates it</text>
+    <text x="268" y="1492.1" font-size="14" fill="#4f4f4f">at its path, on its</text>
+    <text x="268" y="1511.1" font-size="14" fill="#4f4f4f">branch and HEAD, but</text>
+    <text x="268" y="1530.1" font-size="14" fill="#4f4f4f">not its ignored files</text>
+    <path d="M226 1525.5H246" stroke="#8f8f8f" stroke-width="1.5" fill="none"/><path d="M245 1520.5L253 1525.5L245 1530.5Z" fill="#8f8f8f"/>
+    <!-- 5. What it never touches -->
+    <rect x="20.5" y="1571.5" width="439" height="212" rx="8" fill="#ffffff" stroke="#dedede"/>
+    <text x="36" y="1601.6" font-size="17" font-weight="500" fill="#0a0a0a">What it never touches</text>
+    <text x="36" y="1625.5" font-size="15" fill="#4f4f4f"><tspan fill="#0a0a0a">Branches, commits and stashes:</tspan> residue</text>
+    <text x="36" y="1646.5" font-size="15" fill="#4f4f4f">never deletes one.</text>
+    <text x="36" y="1674.5" font-size="15" fill="#0a0a0a">A worktree that is kept, unknown or stale:</text>
+    <text x="36" y="1695.5" font-size="15" fill="#4f4f4f">you can select only the ones that can go.</text>
+    <text x="36" y="1723.5" font-size="15" fill="#4f4f4f"><tspan fill="#0a0a0a">The network:</tspan> the app makes no request of</text>
+    <text x="36" y="1744.5" font-size="15" fill="#4f4f4f">its own. <tspan fill="#0a0a0a">watch</tspan> and Preview fetch from your</text>
+    <text x="36" y="1765.5" font-size="15" fill="#4f4f4f">remotes, unless <tspan fill="#0a0a0a">--no-fetch</tspan>.</text>
+  </g>
+</svg>
