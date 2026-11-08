@@ -7,10 +7,13 @@ import type {
   Removal,
   RestoreDocument,
   ScanDocument,
+  ServiceBasis,
   ServiceChange,
   ServicePreview,
+  ServiceSave,
   ServiceStatus,
   Settings,
+  StatsDocument,
 } from "./types";
 
 /** Every rejection from a command is a CliError; anything else is wrapped. */
@@ -47,9 +50,10 @@ export const api = {
   restore: (entryPath: string, root: string) =>
     call<RestoreDocument>("restore", { entryPath, root }),
   serviceStatus: () => call<ServiceStatus>("service_status"),
-  /** `keep` is the plan's options the window showed; a changed service refuses. */
-  serviceInstall: (roots: string[], dryRun: boolean, keep: string[]) =>
-    call<ServiceChange>("service_install", { roots, dryRun, keep }),
+  /** `basis` is the one the dialog showed; a fresh read that differs installs nothing. */
+  serviceInstall: (roots: string[], dryRun: boolean, basis: ServiceBasis) =>
+    call<ServiceSave>("service_install", { roots, dryRun, basis }),
   serviceUninstall: () => call<ServiceChange>("service_uninstall"),
   servicePreview: (roots: string[]) => call<ServicePreview>("service_preview", { roots }),
+  stats: () => call<StatsDocument>("stats"),
 };

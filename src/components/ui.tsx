@@ -1,6 +1,6 @@
 import { Button, Loader } from "@cloudflare/kumo";
 import { Check, Copy, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { CliError, Verdict } from "../lib/types";
 import { verdictHelp, verdictLabel } from "../lib/worktree";
 
@@ -58,6 +58,39 @@ export function Words({ text }: { text: string }) {
   );
 }
 
+/** Options in a sentence, each kept on one line: a browser breaks a line after a hyphen. */
+export function Flags({ flags }: { flags: string[] }) {
+  return (
+    <>
+      {flags.map((flag, i) => (
+        <Fragment key={flag}>
+          {i > 0 ? ", " : null}
+          <span className="flag">{flag}</span>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/** A sentence the app writes, each `--option` in it kept on one line, as `Flags` keeps one. */
+export function FlagWords({ text }: { text: string }) {
+  const parts = text.split(/(--[a-z][a-z-]*)/);
+  return (
+    <>
+      {parts.map((part, i) =>
+        // The split alternates text and options; a part's index is its identity.
+        i % 2 === 1 ? (
+          <span key={i} className="flag">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
 const PERMISSION =/operation not permitted|permission denied/i;
 
 /** macOS privacy settings block a folder: the fix is in System Settings. */
@@ -68,8 +101,8 @@ export function isPermissionError(text: string | null | undefined): boolean {
 export function PermissionHint() {
   return (
     <p className="hint">
-      macOS kept residue from reading a folder. Open System Settings, Privacy & Security, Files
-      and Folders (or Full Disk Access), allow residue, then try again.
+      macOS blocked residue from a folder. Allow residue in System Settings, Privacy & Security,
+      Files and Folders (or Full Disk Access), then try again.
     </p>
   );
 }
@@ -94,8 +127,8 @@ export function ErrorPanel({
       <p>{error.message}</p>
       {error.kind === "missing" ? (
         <p className="hint">
-          The residue binary inside the app is missing or cannot start. Download the app again
-          from github.com/whiteheap/residue-desktop/releases.
+          The residue inside the app is missing or cannot start. Download the app again from
+          github.com/whiteheap/residue/releases.
         </p>
       ) : null}
       {permission ? <PermissionHint /> : null}

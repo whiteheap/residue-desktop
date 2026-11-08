@@ -1,4 +1,4 @@
-//! residue desktop: a window over the residue CLI.
+//! The residue Mac app: a window over the residue CLI.
 //!
 //! Every check, size, removal and restore comes from the bundled `residue`
 //! binary. The commands here run it with explicit arguments and return its
@@ -13,12 +13,11 @@ mod env;
 mod service;
 mod settings;
 
-use cli::{CliError, ErrorKind, Run};
+use cli::{CliError, Document, ErrorKind, Run};
 use serde::Serialize;
-use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tauri::Manager;
 
@@ -27,6 +26,7 @@ use tauri::Manager;
 const SCAN_DEADLINE: Duration = Duration::from_secs(30 * 60);
 const REMOVE_DEADLINE: Duration = Duration::from_secs(30 * 60);
 const RESTORE_DEADLINE: Duration = Duration::from_secs(10 * 60);
+const STATS_DEADLINE: Duration = Duration::from_secs(2 * 60);
 
 struct State {
     sidecar: PathBuf,
@@ -34,6 +34,8 @@ struct State {
     config_dir: PathBuf,
     data_dir: PathBuf,
     dev: service::DevPreview,
+    /// The bundled residue's version, once a read has given it.
+    version: Mutex<Option<String>>,
 }
 
 type AppState<'a> = tauri::State<'a, Arc<State>>;
@@ -67,7 +69,21 @@ impl State {
         .output()
     }
 
+    /// The bundled residue's version. The binary ships inside the app, so the
+    /// first read that gives a version serves every later call; an app
+    /// replaced on disk while it runs shows the old version, like its old
+    /// window, until it restarts. A failed read is not kept: the next call
+    /// runs `residue --version` again, so a passing failure (a start slower
+    /// than the deadline, a spawn the system refused) does not last until the
+    /// app quits, and a lasting one reports its own error each time.
     fn bundled_version(&self) -> Result<String, CliError> {
+        // Held through the read, so calls that come together start one
+        // process. A poisoned lock still holds a whole value: the one write is
+        // a single assignment after a read succeeds.
+        let mut cached = self.version.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(v) = cached.as_ref() {
+            return Ok(v.clone());
+        }
         let out = self.run(
             vec!["--version".into()],
             &self.home,
@@ -75,7 +91,7 @@ impl State {
         )?;
         let text = out.stdout.trim();
         match text.strip_prefix("residue ") {
-            Some(v) if out.code == Some(0) => Ok(v.to_string()),
+            Some(v) if out.code == Some(0) => Ok(cached.insert(v.to_string()).clone()),
             _ => Err(out.error(
                 ErrorKind::BadOutput,
                 format!("residue --version printed {text:?}"),
@@ -116,6 +132,9 @@ struct AppInfo {
     /// `residue remove --keep-trash` when none is given, which the app's
     /// removals and automatic cleanup use.
     default_keep_trash: &'static str,
+    /// `residue remove --keep-removed` when none is given, which the app's
+    /// removals use.
+    default_keep_removed: &'static str,
 }
 
 #[tauri::command]
@@ -131,6 +150,7 @@ async fn app_info(app: tauri::AppHandle, state: AppState<'_>) -> Result<AppInfo,
             path_source: env::path().1,
             dev_service_preview: s.dev.enabled,
             default_keep_trash: service::DEFAULT_KEEP_TRASH,
+            default_keep_removed: service::DEFAULT_KEEP_REMOVED,
         })
     })
     .await
@@ -154,7 +174,7 @@ async fn set_roots(
 
 /// `residue scan --json ROOT...`
 #[tauri::command]
-async fn scan(state: AppState<'_>, roots: Vec<String>) -> Result<Value, CliError> {
+async fn scan(state: AppState<'_>, roots: Vec<String>) -> Result<Document, CliError> {
     blocking(&state, move |s| {
         let roots = settings::folders(&roots)?;
         if roots.is_empty() {
@@ -170,7 +190,7 @@ async fn scan(state: AppState<'_>, roots: Vec<String>) -> Result<Value, CliError
 
 /// `residue explain --json PATH`
 #[tauri::command]
-async fn explain(state: AppState<'_>, path: String) -> Result<Value, CliError> {
+async fn explain(state: AppState<'_>, path: String) -> Result<Document, CliError> {
     blocking(&state, move |s| {
         let path = absolute(&path)?;
         s.run(
@@ -185,7 +205,7 @@ async fn explain(state: AppState<'_>, path: String) -> Result<Value, CliError> {
 
 #[derive(Serialize)]
 struct Removal {
-    document: Value,
+    document: Document,
     exit_code: Option<i32>,
 }
 
@@ -235,7 +255,7 @@ async fn remove_to_trash(state: AppState<'_>, paths: Vec<String>) -> Result<Remo
 struct Listing {
     /// The folder the listing ran in.
     root: String,
-    document: Option<Value>,
+    document: Option<Document>,
     error: Option<CliError>,
 }
 
@@ -279,7 +299,11 @@ async fn list_restorable(
 
 /// `residue restore --json ENTRY_PATH`, run in the folder that listed it.
 #[tauri::command]
-async fn restore(state: AppState<'_>, entry_path: String, root: String) -> Result<Value, CliError> {
+async fn restore(
+    state: AppState<'_>,
+    entry_path: String,
+    root: String,
+) -> Result<Document, CliError> {
     blocking(&state, move |s| {
         let entry = absolute(&entry_path)?;
         let root = settings::folders(&[root])?
@@ -298,6 +322,22 @@ async fn restore(state: AppState<'_>, entry_path: String, root: String) -> Resul
     .await
 }
 
+/// `residue stats --json`: what residue has freed on this machine, from its
+/// ledger. It reads the ledger and the trash entries of the repositories the
+/// ledger names, never a worktree, so it is quick.
+#[tauri::command]
+async fn stats(state: AppState<'_>) -> Result<Document, CliError> {
+    blocking(&state, |s| {
+        s.run(
+            vec!["stats".into(), "--json".into()],
+            &s.home,
+            STATS_DEADLINE,
+        )?
+        .document("residue.stats/v1")
+    })
+    .await
+}
+
 #[tauri::command]
 async fn service_status(state: AppState<'_>) -> Result<service::Status, CliError> {
     blocking(&state, |s| {
@@ -307,21 +347,21 @@ async fn service_status(state: AppState<'_>) -> Result<service::Status, CliError
     .await
 }
 
-/// Turn the service on, or save other folders. `keep` is the options the
-/// window showed a save would keep (`Status.plan.keep`); when the service
-/// changed since, nothing is installed.
+/// Turn the service on, or save other folders. `basis` is the one the window
+/// showed (`Status.basis`); when a fresh read differs, nothing is installed
+/// and the result is `changed`, with what changed and the fresh status.
 #[tauri::command]
 async fn service_install(
     state: AppState<'_>,
     roots: Vec<String>,
     dry_run: bool,
-    keep: Vec<String>,
-) -> Result<service::Change, CliError> {
+    basis: service::Basis,
+) -> Result<service::Save, CliError> {
     blocking(&state, move |s| {
         let roots = settings::folders(&roots)?;
         let version = s.bundled_version()?;
         let ctx = s.service_context(&version);
-        service::install(&ctx, &s.dev, &roots, dry_run, &keep)
+        service::install(&ctx, &s.dev, &roots, dry_run, &basis)
     })
     .await
 }
@@ -335,8 +375,9 @@ async fn service_uninstall(state: AppState<'_>) -> Result<service::Change, CliEr
     .await
 }
 
-/// `residue watch --once --dry-run ROOT...` with the options a save keeps:
-/// what automatic cleanup would remove now. It removes nothing.
+/// `residue watch --once --dry-run ROOT...` with every option a save keeps,
+/// run by the binary a save installs with: what automatic cleanup would
+/// remove now, fetching first as the service does. It removes nothing.
 #[tauri::command]
 async fn service_preview(
     state: AppState<'_>,
@@ -345,9 +386,7 @@ async fn service_preview(
     blocking(&state, move |s| {
         let roots = settings::folders(&roots)?;
         let version = s.bundled_version()?;
-        let ctx = s.service_context(&version);
-        let current = service::status(&ctx, &s.dev)?;
-        service::preview(&ctx, &roots, &current.plan.keep)
+        service::preview(&s.service_context(&version), &s.dev, &roots)
     })
     .await
 }
@@ -363,14 +402,16 @@ fn absolute(path: &str) -> Result<PathBuf, CliError> {
 
 /// The bundled residue binary. Tauri places each `externalBin` next to the
 /// app's own executable without its target-triple suffix, in `tauri dev` and
-/// in the bundle (`residue.app/Contents/MacOS/residue`).
+/// in the bundle (`residue.app/Contents/MacOS/residue-cli`). It is not named
+/// residue: that is the app's own executable, which must never run in place
+/// of the CLI.
 fn sidecar() -> Result<PathBuf, String> {
     let exe =
         std::env::current_exe().map_err(|e| format!("cannot find the app's executable: {e}"))?;
     let dir = exe
         .parent()
         .ok_or_else(|| "the app's executable has no parent directory".to_string())?;
-    Ok(dir.join("residue"))
+    Ok(dir.join("residue-cli"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -386,6 +427,7 @@ pub fn run() {
                 config_dir: paths.app_config_dir()?,
                 data_dir: paths.app_local_data_dir()?,
                 dev: service::DevPreview::from_env(),
+                version: Mutex::new(None),
             };
             app.manage(Arc::new(state));
             // Read the login shell's PATH while the window loads.
@@ -406,6 +448,7 @@ pub fn run() {
             remove_to_trash,
             list_restorable,
             restore,
+            stats,
             service_status,
             service_install,
             service_uninstall,
@@ -413,7 +456,7 @@ pub fn run() {
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
-        eprintln!("residue desktop: {e}");
+        eprintln!("residue app: {e}");
         std::process::exit(1);
     }
 }

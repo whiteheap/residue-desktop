@@ -1,14 +1,17 @@
 //! Running residue: an explicit argv, a known PATH, a deadline, and the output
 //! read back as one of residue's JSON documents. The documents are the
 //! contract between the CLI and this app; nothing here decides what is safe
-//! to remove.
+//! to remove. Every child the app starts, residue or not, is started by
+//! [`spawn`].
 
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -85,25 +88,28 @@ pub struct Run<'a> {
 impl Run<'_> {
     pub fn output(&self) -> Result<Output, CliError> {
         let command = shown(self.bin, &self.args);
-        let mut child = Command::new(self.bin)
-            .args(&self.args)
+        let mut cmd = Command::new(self.bin);
+        cmd.args(&self.args)
             .current_dir(self.cwd)
             .env("PATH", self.path_env)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| CliError {
-                kind: ErrorKind::Missing,
-                message: format!("cannot start {}: {e}", self.bin.display()),
-                command: Some(command.clone()),
-                stderr: None,
-                exit_code: None,
-            })?;
+            .stderr(Stdio::piped());
+        let mut child = spawn(&mut cmd).map_err(|e| CliError {
+            kind: ErrorKind::Missing,
+            message: format!("cannot start {}: {e}", self.bin.display()),
+            command: Some(command.clone()),
+            stderr: None,
+            exit_code: None,
+        })?;
 
         let stdout = child.stdout.take().map(reader);
         let stderr = child.stderr.take().map(reader);
         let started = Instant::now();
+        // Look often at first, so a quick command returns at once, then every
+        // 25 ms, as before: a longer pause would delay the answer to every slow
+        // command to save almost no CPU.
+        let mut pause = Duration::from_millis(1);
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
@@ -127,7 +133,10 @@ impl Run<'_> {
                         exit_code: None,
                     });
                 }
-                Ok(None) => thread::sleep(Duration::from_millis(25)),
+                Ok(None) => {
+                    thread::sleep(pause);
+                    pause = (pause * 2).min(Duration::from_millis(25));
+                }
                 Err(e) => {
                     return Err(CliError {
                         kind: ErrorKind::Failed,
@@ -148,13 +157,39 @@ impl Run<'_> {
     }
 }
 
+/// Start `cmd`, one child at a time. On macOS, which has no `pipe2`, the
+/// standard library makes a child's pipes with `pipe()` and marks them
+/// close-on-exec in a second step. The window's requests run on several
+/// threads at once (`lib.rs`, `blocking`), and a child another thread starts
+/// between the two steps inherits them: then the first child's output ends
+/// only when that other child, and anything it left running, exits (#116).
+/// Under this lock no child starts while another start is making its pipes.
+///
+/// The lock covers only the children started here, so this is the one call
+/// of `Command::spawn` in the app, and `clippy.toml` refuses `spawn`,
+/// `output` and `status` anywhere else. A start holds the lock for the
+/// `posix_spawn` or `fork` and `exec` alone, never while the child runs.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the one place a child starts, under the lock"
+)]
+pub fn spawn(cmd: &mut Command) -> io::Result<Child> {
+    static STARTING: Mutex<()> = Mutex::new(());
+    // The lock guards no data, so a start that panicked holding it left
+    // nothing half done.
+    let _starting = STARTING.lock().unwrap_or_else(PoisonError::into_inner);
+    cmd.spawn()
+}
+
 type Reader = thread::JoinHandle<std::io::Result<String>>;
 
 fn reader(stream: impl Read + Send + 'static) -> Reader {
     thread::spawn(move || {
         let mut text = Vec::new();
         stream.take(OUTPUT_CAP).read_to_end(&mut text)?;
-        Ok(String::from_utf8_lossy(&text).into_owned())
+        // Valid UTF-8, as residue prints, becomes the String without a copy.
+        Ok(String::from_utf8(text)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
     })
 }
 
@@ -168,12 +203,25 @@ fn join_reader(handle: Reader) -> String {
     }
 }
 
+/// One of residue's JSON documents, as the text residue printed. The window
+/// is what reads it, so the app checks that it is JSON with the expected
+/// `schema` and passes the text on, without building a tree of it that would
+/// only be written back to text: a scan of many worktrees is megabytes.
+pub type Document = Box<RawValue>;
+
+/// The one field of a document the app reads.
+#[derive(Deserialize)]
+struct Head<'a> {
+    #[serde(borrow)]
+    schema: Option<Cow<'a, str>>,
+}
+
 impl Output {
     /// The JSON document residue printed, when its `schema` is `schema`.
     /// residue prints one on success and on the exit statuses that still
     /// report (remove's 3, a restore listing that missed a path). Anything
     /// else is an error carrying stderr.
-    pub fn document(&self, schema: &str) -> Result<Value, CliError> {
+    pub fn document(&self, schema: &str) -> Result<Document, CliError> {
         let trimmed = self.stdout.trim();
         if trimmed.is_empty() {
             return Err(self.error(
@@ -186,13 +234,20 @@ impl Output {
                 },
             ));
         }
-        let doc: Value = serde_json::from_str(trimmed).map_err(|e| {
+        // Parsing into a RawValue checks the whole text and keeps it as is.
+        let doc: Document = serde_json::from_str(trimmed).map_err(|e| {
             self.error(
                 ErrorKind::BadOutput,
                 format!("residue printed something that is not JSON ({e})"),
             )
         })?;
-        match doc.get("schema").and_then(Value::as_str) {
+        // The text is valid JSON, so this fails only when it is not an
+        // object or its `schema` is not a string: either way it has no
+        // schema, which the error below says.
+        let found = serde_json::from_str::<Head>(doc.get())
+            .ok()
+            .and_then(|h| h.schema);
+        match found.as_deref() {
             Some(s) if s == schema => Ok(doc),
             other => Err(self.error(
                 ErrorKind::BadOutput,

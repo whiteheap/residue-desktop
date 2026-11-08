@@ -1,10 +1,13 @@
 import { Button, Dialog } from "@cloudflare/kumo";
 import { Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { ErrorPanel, Loading, SolidButton } from "../components/ui";
+import { ErrorPanel, Flags, Loading, SolidButton } from "../components/ui";
 import { api, asCliError } from "../lib/api";
-import { baseName, bytes, plural, span, tilde } from "../lib/format";
+import { ageOf, baseName, bytes, plural, span, tilde } from "../lib/format";
+import { removalLine } from "../lib/freed";
+import { removedBy } from "../lib/records";
 import type { CliError, RemoveDocument } from "../lib/types";
+import { documentTime } from "../lib/useCli";
 import { displayPath, keptBy, checkLabel } from "../lib/worktree";
 
 type Phase =
@@ -17,17 +20,21 @@ type Phase =
 /**
  * Move worktrees to the trash. First residue's own plan (`residue remove
  * --trash --json PATH...` without --yes, which removes nothing): each worktree
- * checked again, and the expired trash entries the run would purge. The user
- * confirms exactly that list; then the same command with --yes.
+ * checked again, the expired trash entries the run would purge, and the
+ * removal records it would forget. The user confirms exactly that list; then
+ * the same command with --yes.
  */
 export function RemoveDialog({
   paths,
   home,
+  estimateNote,
   onClose,
   onRemoved,
 }: {
   paths: string[];
   home: string | undefined;
+  /** residue's sentence on how it measures sizes, from its stats, shown with the freed line. */
+  estimateNote: string | undefined;
   onClose: () => void;
   onRemoved: (doc: RemoveDocument) => void;
 }) {
@@ -72,8 +79,7 @@ export function RemoveDialog({
         {phase.step === "planning" ? (
           <>
             <Dialog.Description className="dialog-text">
-              residue is checking {plural(paths.length, "worktree")} again before it shows you
-              the plan. Nothing moves yet.
+              Checking {plural(paths.length, "worktree")} again. Nothing moves yet.
             </Dialog.Description>
             <Loading title="Checking again" />
           </>
@@ -89,7 +95,7 @@ export function RemoveDialog({
           />
         ) : null}
 
-        {phase.step === "done" ? <Result doc={phase.result} home={home} onClose={onClose} /> : null}
+        {phase.step === "done" ? <Result doc={phase.result} home={home} estimateNote={estimateNote} onClose={onClose} /> : null}
 
         {phase.step === "error" ? (
           <>
@@ -127,14 +133,18 @@ function Plan({
   const ready = plan.results.filter((r) => r.result === "skipped" && r.worktree?.verdict === "candidate");
   const kept = plan.results.filter((r) => !ready.includes(r));
   const purges = plan.purged.filter((p) => p.result === "skipped");
+  // Without --yes, a record the run would forget is skipped too.
+  const forgets = plan.forgotten.filter((f) => f.result === "skipped");
   const total = ready.reduce((sum, r) => sum + (r.worktree?.size?.reclaimable_bytes ?? 0), 0);
+  const now = documentTime(plan.generated_at);
+  const recordsKept = span(plan.removal_records.keep_seconds);
 
   return (
     <>
       <Dialog.Description className="dialog-text">
         {ready.length > 0
-          ? `residue moves ${plural(ready.length, "worktree")} into its repository's trash. Each branch and its commits stay. Restore puts a worktree back until residue deletes it from the trash after ${span(plan.trash.keep_seconds)}.`
-          : "residue would keep every one of these worktrees, so nothing moves."}
+          ? `Branches and commits stay. Restore brings a worktree back whole for at least ${span(plan.trash.keep_seconds)}, then from its removal record, without ignored files, for at least ${recordsKept}.`
+          : "residue keeps all of these, so nothing moves."}
       </Dialog.Description>
 
       {ready.length > 0 ? (
@@ -155,9 +165,8 @@ function Plan({
             })}
           </ul>
           <p className="hint">
-            The trash frees no space yet: a trashed worktree keeps its {bytes(total)} until
-            residue deletes it, {span(plan.trash.keep_seconds)} from now, during a later removal or automatic
-            cleanup in that repository.
+            Frees no space yet: the first removal or automatic cleanup in its repository after{" "}
+            {span(plan.trash.keep_seconds)} deletes it and frees the {bytes(total)}.
           </p>
         </section>
       ) : null}
@@ -184,10 +193,10 @@ function Plan({
 
       {purges.length > 0 ? (
         <section className="plan-section">
-          <h3>Deleted from the trash for good</h3>
+          <h3>Deleted from the trash</h3>
           <p className="hint">
-            The same run deletes these trash entries, older than {span(plan.trash.keep_seconds)}. They cannot
-            be restored afterwards.
+            Older than {span(plan.trash.keep_seconds)}. Each leaves a removal record: Restore recreates
+            the worktree from it, without ignored files, for at least {recordsKept}.
           </p>
           <ul className="plan-list">
             {purges.map((p) => (
@@ -195,6 +204,30 @@ function Plan({
                 <span className="plan-name">{p.entry.entry}</span>
                 <span className="plan-path">{tilde(p.entry.original_path ?? p.entry.entry_path, home)}</span>
                 <span className="num">{bytes(p.entry.reclaimable_bytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {forgets.length > 0 ? (
+        <section className="plan-section">
+          <h3>Removal records forgotten</h3>
+          <p className="hint">
+            Each is older than both {recordsKept} (<Flags flags={["--keep-removed"]} />) and the{" "}
+            <Flags flags={["--keep-removed"]} /> it was written with. Restore can no longer bring these
+            back. Branches stay; a commit only the record held, such as one on a deleted branch, is
+            left to the next git gc, which can delete it.
+          </p>
+          <ul className="plan-list">
+            {forgets.map((f) => (
+              <li key={f.entry.entry_path}>
+                <span className="plan-name">{baseName(f.entry.original_path ?? f.entry.entry)}</span>
+                <span className="plan-path">
+                  {/* An unfinished record residue cannot read is forgotten an hour on; its error says why. */}
+                  {f.entry.error ??
+                    ["removed", ageOf(f.entry.removed_at, now), removedBy(f.entry.reason)].filter(Boolean).join(" ")}
+                </span>
               </li>
             ))}
           </ul>
@@ -209,6 +242,17 @@ function Plan({
         </ul>
       ) : null}
 
+      {plan.warnings.length > 0 ? (
+        <section className="plan-section">
+          <h3>Warnings</h3>
+          <ul className="plan-errors">
+            {plan.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <div className="dialog-buttons">
         <Button variant="secondary" onClick={onCancel} disabled={running}>
           Cancel
@@ -220,7 +264,7 @@ function Plan({
             disabled={running}
             onClick={() => onConfirm(ready.map((r) => r.path))}
           >
-            {running ? "Moving…" : `Move ${plural(ready.length, "worktree")} to trash`}
+            {running ? "Moving…" : `Move ${plural(ready.length, "worktree")} to the trash`}
           </SolidButton>
         ) : null}
       </div>
@@ -237,9 +281,21 @@ const RESULT_TEXT: Record<string, string> = {
   invalid: "not a worktree",
 };
 
-function Result({ doc, home, onClose }: { doc: RemoveDocument; home: string | undefined; onClose: () => void }) {
+function Result({
+  doc,
+  home,
+  estimateNote,
+  onClose,
+}: {
+  doc: RemoveDocument;
+  home: string | undefined;
+  estimateNote: string | undefined;
+  onClose: () => void;
+}) {
+  const freed = removalLine(doc.stats, doc.trash.keep);
   const moved = doc.results.filter((r) => r.result === "trashed");
   const purged = doc.purged.filter((p) => p.result === "purged");
+  const forgotten = doc.forgotten.filter((f) => f.result === "forgotten");
   const other = doc.results.filter((r) => r.result !== "trashed");
   return (
     <>
@@ -262,10 +318,25 @@ function Result({ doc, home, onClose }: { doc: RemoveDocument; home: string | un
           );
         })}
       </ul>
+      {freed ? (
+        // residue's own line, as `residue remove` ends, with its note on how sizes are measured.
+        <p className="hint">
+          {freed.charAt(0).toUpperCase()}
+          {freed.slice(1)}.{estimateNote ? ` ${estimateNote}` : ""}
+        </p>
+      ) : null}
       {purged.length > 0 ? (
         <p className="hint">
-          Deleted {plural(purged.length, "old trash entry", "old trash entries")} for good, freeing{" "}
-          {bytes(purged.reduce((s, p) => s + (p.entry.reclaimable_bytes ?? 0), 0))}.
+          Deleted {plural(purged.length, "old trash entry", "old trash entries")}, freeing{" "}
+          {bytes(purged.reduce((s, p) => s + (p.entry.reclaimable_bytes ?? 0), 0))}. Each left a
+          removal record in Restore.
+        </p>
+      ) : null}
+      {forgotten.length > 0 ? (
+        <p className="hint">
+          Forgot {plural(forgotten.length, "removal record")}, each older than both{" "}
+          {span(doc.removal_records.keep_seconds)} and the <Flags flags={["--keep-removed"]} /> it
+          was written with.
         </p>
       ) : null}
       {other.length > 0 || doc.errors.length > 0 ? (
@@ -274,6 +345,16 @@ function Result({ doc, home, onClose }: { doc: RemoveDocument; home: string | un
             <li key={e}>{e}</li>
           ))}
         </ul>
+      ) : null}
+      {doc.warnings.length > 0 ? (
+        <section className="plan-section">
+          <h3>Warnings</h3>
+          <ul className="plan-errors">
+            {doc.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </section>
       ) : null}
       <div className="dialog-buttons">
         <SolidButton onClick={onClose}>
