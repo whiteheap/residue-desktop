@@ -4,7 +4,7 @@ This repository holds the residue Mac app: a window over the residue CLI that li
 
 The app never reimplements a check, a size or a deletion: it runs residue with explicit arguments and shows what residue reports. The residue inside the app is the residue-cli release that `sidecar.lock` pins, checked by its sha256 and its build-provenance attestation. The service that automatic cleanup installs runs a residue you installed when one is at least as new, or else a copy of the app's residue in `~/Library/Application Support/com.whiteheap.residue/bin/`. The app is Tauri 2: Rust in `src-tauri/`, React and TypeScript in `src/` (Kumo components, Phosphor icons, Tailwind 4). [AGENTS.md](AGENTS.md) has the invariants.
 
-The app's whole history is here: its first commits, then those made in residue-cli's `app/` folder, merged in 04955a5.
+The app's whole history is here: its first commits, then those made in residue-cli's `app/` folder, merged in #3 and #7.
 
 ## Build from source
 

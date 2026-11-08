@@ -2,7 +2,7 @@
 
 residue-ui is the residue Mac app: a Tauri 2 window over the residue CLI from [whiteheap/residue-cli](https://github.com/whiteheap/residue-cli), which it bundles. Rust in `src-tauri/`, React and TypeScript in `src/` (Kumo components, Phosphor icons, Tailwind 4). The [README](README.md) is the user contract. [CONTRIBUTING.md](CONTRIBUTING.md) has the build, the checks and the numbers to compare with.
 
-The app lived in residue-cli's `app/` folder from residue-cli#40 to residue-cli#126, and merge 04955a5 brought that history here. Issue and pull request numbers in those commits are residue-cli's. Cite them as `residue-cli#N`, in code and in docs, so they never read as this repository's.
+The app lived in residue-cli's `app/` folder from residue-cli#40 to residue-cli#130, and the merges in #3 and #7 brought that history here. Issue and pull request numbers in those commits are residue-cli's. Cite them as `residue-cli#N`, in code and in docs, so they never read as this repository's.
 
 ## Invariants
 
