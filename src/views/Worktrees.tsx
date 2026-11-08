@@ -1,6 +1,7 @@
 import { Button, Checkbox, Empty, Tabs } from "@cloudflare/kumo";
-import { ArrowClockwise, CaretRight, FolderPlus, Trash } from "@phosphor-icons/react";
-import { useId, useMemo, useState } from "react";
+import { ArrowClockwise, ArrowsClockwise, CaretRight, FolderPlus, Trash } from "@phosphor-icons/react";
+import { useId, useMemo, type CSSProperties } from "react";
+import { Treemap, type ZoomLevel } from "../components/viz/Treemap";
 import {
   ErrorPanel,
   Loading,
@@ -12,23 +13,18 @@ import {
   isPermissionError,
 } from "../components/ui";
 import { baseName, bytes, inside, plural, tilde } from "../lib/format";
-import type { CliError, Repository, ScanDocument, Worktree } from "../lib/types";
+import { localTime } from "../lib/freed";
+import type { CliError, FreedSum, Repository, ScanDocument, Worktree } from "../lib/types";
 import { documentTime } from "../lib/useCli";
+import { matches, type Filter } from "../lib/viz";
 import { branchLabel, displayPath, sizeOf, summary } from "../lib/worktree";
 
-type Filter = "all" | "candidate" | "kept";
-
+/** One filter scopes the chart and the list alike. */
 const FILTERS = [
   { value: "all", label: "All" },
   { value: "candidate", label: "Can go" },
   { value: "kept", label: "Kept" },
 ];
-
-function matches(w: Worktree, filter: Filter): boolean {
-  if (filter === "all") return true;
-  if (filter === "candidate") return w.verdict === "candidate";
-  return w.verdict !== "candidate";
-}
 
 export function Worktrees({
   doc,
@@ -36,26 +32,42 @@ export function Worktrees({
   scanning,
   roots,
   home,
+  filter,
+  onFilter,
+  zoom,
+  onZoom,
   selected,
   onSelect,
   onRescan,
   onOpen,
   onRemove,
   onChooseFolders,
+  freed,
+  cleaned,
+  onFreed,
 }: {
   doc: ScanDocument | undefined;
   error: CliError | undefined;
   scanning: boolean;
   roots: string[];
   home: string | undefined;
+  /** The filter and the chart's zoom live in the app, so both outlast a visit to a worktree's checks. */
+  filter: Filter;
+  onFilter: (filter: Filter) => void;
+  zoom: ZoomLevel[];
+  onZoom: (zoom: ZoomLevel[]) => void;
   selected: Set<string>;
   onSelect: (paths: string[], on: boolean) => void;
   onRescan: () => void;
   onOpen: (path: string) => void;
   onRemove: (paths: string[]) => void;
   onChooseFolders: () => void;
+  /** What residue freed in the last 7 days and its estimate note; "unavailable" when its stats could not be read, null while they are read. */
+  freed: { week: FreedSum; note: string } | "unavailable" | null;
+  /** What automatic cleanup freed since the app was last open (`cleanedSinceLastOpen`), with the estimate note; null when there is nothing to say. */
+  cleaned: (FreedSum & { since: string; note: string }) | null;
+  onFreed: () => void;
 }) {
-  const [filter, setFilter] = useState<Filter>("all");
   const now = documentTime(doc?.generated_at) ?? 0;
 
   const repos = useMemo(() => {
@@ -84,7 +96,7 @@ export function Worktrees({
       description={
         roots.length > 0
           ? `Linked Git worktrees under ${roots.map((r) => tilde(r, home)).join(", ")}`
-          : "Choose the folders that hold your repositories."
+          : "Choose the folders that hold your code."
       }
       actions={
         <Button
@@ -106,10 +118,11 @@ export function Worktrees({
       <>
         {header}
         <div className="page-body">
+          <SinceOpen cleaned={cleaned} onFreed={onFreed} />
           <Empty
             icon={<FolderPlus size={32} />}
             title="No folders to scan"
-            description="residue looks for Git repositories in the folders you choose, and in every folder under them."
+            description="residue scans each folder you choose and every folder inside it."
             contents={
               <SolidButton icon={<FolderPlus />} onClick={onChooseFolders}>
                 Choose folders
@@ -125,6 +138,7 @@ export function Worktrees({
     <>
       {header}
       <div className="page-body" aria-busy={scanning}>
+        <SinceOpen cleaned={cleaned} onFreed={onFreed} />
         {error ? (
           <ErrorPanel
             title="The scan did not finish"
@@ -145,18 +159,18 @@ export function Worktrees({
         {scanning && !doc ? (
           <Loading
             title={`Scanning ${roots.map((r) => tilde(r, home)).join(", ")}`}
-            detail="residue checks and measures every linked worktree. A large folder takes a minute."
+            detail="A large folder can take a minute."
           />
         ) : null}
 
         {doc ? (
           <>
-            <Summary doc={doc} scanning={scanning} />
+            <Summary doc={doc} scanning={scanning} freed={freed} onFreed={onFreed} />
             {doc.errors.length > 0 ? <ScanErrors errors={doc.errors} /> : null}
             {doc.summary.linked_worktrees === 0 ? (
               <Empty
                 title="No linked worktrees"
-                description="These folders have no Git worktrees besides each repository's main checkout. Nothing takes extra space."
+                description="These folders hold only each repository's main checkout."
               />
             ) : (
               <>
@@ -166,29 +180,38 @@ export function Worktrees({
                     size="sm"
                     tabs={FILTERS}
                     value={filter}
-                    onValueChange={(v) => setFilter(v as Filter)}
+                    onValueChange={(v) => onFilter(v as Filter)}
                   />
                 </div>
                 {repos.length === 0 ? (
                   <p className="quiet">
                     {filter === "candidate"
-                      ? "No worktree can go right now: each one has a check that keeps it."
+                      ? "None can go now: a check keeps each one."
                       : "Every worktree can go."}
                   </p>
                 ) : (
-                  repos.map(({ repo, worktrees }) => (
-                    <RepoGroup
-                      key={repo.common_dir}
-                      repo={repo}
-                      worktrees={worktrees}
-                      home={home}
-                      now={now}
-                      selected={selected}
-                      onSelect={onSelect}
-                      onOpen={onOpen}
-                    />
-                  ))
+                  <Treemap
+                    doc={doc}
+                    filter={filter}
+                    now={now}
+                    busy={scanning}
+                    zoom={zoom}
+                    onZoom={onZoom}
+                    onOpen={onOpen}
+                  />
                 )}
+                {repos.map(({ repo, worktrees }) => (
+                  <RepoGroup
+                    key={repo.common_dir}
+                    repo={repo}
+                    worktrees={worktrees}
+                    home={home}
+                    now={now}
+                    selected={selected}
+                    onSelect={onSelect}
+                    onOpen={onOpen}
+                  />
+                ))}
               </>
             )}
           </>
@@ -205,7 +228,7 @@ export function Worktrees({
               Clear
             </Button>
             <SolidButton icon={<Trash />} onClick={() => onRemove(chosen)}>
-              Move to trash…
+              Move {chosen.length} to the trash…
             </SolidButton>
           </div>
         </footer>
@@ -214,7 +237,55 @@ export function Worktrees({
   );
 }
 
-function Summary({ doc, scanning }: { doc: ScanDocument; scanning: boolean }) {
+/**
+ * What automatic cleanup freed while the app was closed, said once the
+ * stats arrive, so nobody has to open Freed to learn it. The status region
+ * (`<output>`: role status, polite) is always there, empty until then, so
+ * a screen reader hears the line when it fills; an empty one takes no room
+ * (`.since-open:empty`).
+ */
+function SinceOpen({
+  cleaned,
+  onFreed,
+}: {
+  cleaned: (FreedSum & { since: string; note: string }) | null;
+  onFreed: () => void;
+}) {
+  return (
+    <output className="since-open" aria-live="polite">
+      {cleaned ? (
+        <>
+          <ArrowsClockwise size={16} aria-hidden className="since-open-icon" />
+          <span>
+            Automatic cleanup freed{" "}
+            <span className="since-open-figure num">about {bytes(cleaned.bytes)}</span>,{" "}
+            {plural(cleaned.worktrees, "worktree")}, since the app was last open.
+          </span>
+          <button
+            type="button"
+            className="link-button"
+            title={`Since ${localTime(cleaned.since)}. ${cleaned.note}`}
+            onClick={onFreed}
+          >
+            Open Freed
+          </button>
+        </>
+      ) : null}
+    </output>
+  );
+}
+
+function Summary({
+  doc,
+  scanning,
+  freed,
+  onFreed,
+}: {
+  doc: ScanDocument;
+  scanning: boolean;
+  freed: { week: FreedSum; note: string } | "unavailable" | null;
+  onFreed: () => void;
+}) {
   const s = doc.summary;
   const a = doc.activity;
   return (
@@ -222,7 +293,7 @@ function Summary({ doc, scanning }: { doc: ScanDocument; scanning: boolean }) {
       <div className="summary-main">
         <p className="summary-figure num">{bytes(s.candidate_reclaimable_bytes)}</p>
         <p className="summary-caption">
-          reclaimable: {s.candidates} of {plural(s.linked_worktrees, "linked worktree")} can go
+          reclaimable: {s.candidates} of {plural(s.linked_worktrees, "worktree")} can go
         </p>
       </div>
       <dl className="summary-facts">
@@ -233,6 +304,23 @@ function Summary({ doc, scanning }: { doc: ScanDocument; scanning: boolean }) {
         <div>
           <dt>In the trash</dt>
           <dd>{plural(s.trash_entries, "entry", "entries")}</dd>
+        </div>
+        <div>
+          <dt>Freed, last 7 days</dt>
+          <dd>
+            {freed === null ? (
+              "reading…"
+            ) : freed === "unavailable" ? (
+              "unavailable"
+            ) : (
+              // The note says how residue measures sizes; the Freed screen shows it in full.
+              <button type="button" className="link-button" title={freed.note} onClick={onFreed}>
+                {freed.week.worktrees > 0
+                  ? `about ${bytes(freed.week.bytes)}, ${plural(freed.week.worktrees, "worktree")}`
+                  : "nothing"}
+              </button>
+            )}
+          </dd>
         </div>
         <div>
           <dt>Activity check</dt>
@@ -246,7 +334,7 @@ function Summary({ doc, scanning }: { doc: ScanDocument; scanning: boolean }) {
           <div>
             <dt>Interrupted removals</dt>
             <dd>
-              {s.interrupted_removals}; run <code>residue scan</code> in a terminal for details
+              {s.interrupted_removals}: <code>residue scan</code> in a terminal shows them
             </dd>
           </div>
         ) : null}
@@ -298,7 +386,7 @@ function RepoGroup({
         <span className="repo-check">
           {candidates.length > 0 ? (
             <Checkbox
-              aria-label={`Select every worktree that can go in ${name}`}
+              aria-label={`Select all that can go in ${name}`}
               checked={chosen > 0 && chosen === candidates.length}
               indeterminate={chosen > 0 && chosen < candidates.length}
               onCheckedChange={(on) => onSelect(candidates, on === true)}
@@ -312,7 +400,8 @@ function RepoGroup({
           {plural(worktrees.length, "worktree")} · {bytes(total)}
         </span>
       </header>
-      <ul className="rows">
+      {/* --rows sizes the list until it is first drawn (styles.css, .rows). */}
+      <ul className="rows" style={{ "--rows": worktrees.length } as CSSProperties}>
         {worktrees.map((w) => (
           <Row
             key={w.path}
@@ -367,6 +456,8 @@ function Row({
       <button
         type="button"
         className="row-main"
+        // Back from the detail returns focus here (App.tsx).
+        data-opener={`row:${w.path}`}
         aria-labelledby={`${id}-name`}
         aria-describedby={`${id}-verdict ${id}-reason`}
         onClick={() => onOpen(w.path)}
