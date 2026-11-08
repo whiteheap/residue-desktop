@@ -1,15 +1,13 @@
-# The Mac app's own crate. It is not part of the residue CLI's package: the
-# root Cargo.toml excludes app/, and the [workspace] table below keeps this
-# crate its own workspace, so nothing at the root builds or reads it.
+# The Mac app's crate. The [workspace] table below makes it a workspace of
+# its own, so cargo never takes a Cargo.toml in a parent folder for one.
 #
-# No version here: the app's version is the CLI's, from the root Cargo.toml,
-# and scripts/tauri.sh passes it to `tauri dev` and `tauri build`.
+# No version here: the app's version is the one in tauri.conf.json.
 [package]
 name = "residue-app"
 description = "The residue Mac app: see and reclaim the storage Git worktrees take"
 authors = ["Whiteheap"]
 license = "MIT"
-repository = "https://github.com/whiteheap/residue"
+repository = "https://github.com/whiteheap/residue-ui"
 edition = "2024"
 rust-version = "1.90"
 publish = false
@@ -22,9 +20,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 # The executable is residue: macOS shows its name in the menu bar, the Dock,
 # Cmd-Tab, Activity Monitor and crash reports, and a `tauri dev` run has no
-# bundle to name it otherwise. The package keeps its own name, so
-# `cargo install --git … residue` still picks the CLI, the package named
-# residue. The bundled CLI is residue-cli beside it (tauri.conf.json).
+# bundle to name it otherwise. The bundled CLI is residue-cli beside it
+# (tauri.conf.json).
 [[bin]]
 name = "residue"
 path = "src/main.rs"

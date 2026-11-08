@@ -128,7 +128,7 @@ export function ErrorPanel({
       {error.kind === "missing" ? (
         <p className="hint">
           The residue inside the app is missing or cannot start. Download the app again from
-          github.com/whiteheap/residue/releases.
+          github.com/whiteheap/residue-ui/releases.
         </p>
       ) : null}
       {permission ? <PermissionHint /> : null}

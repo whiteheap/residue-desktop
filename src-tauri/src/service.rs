@@ -45,8 +45,8 @@ pub const LABEL: &str = "com.whiteheap.residue.watch";
 
 /// `residue watch` options that take a value. `--fetch-every` is new in
 /// residue 0.0.7, which writes it (or `--no-fetch`) into every service;
-/// `--keep-removed` is new after 0.0.7 (#55), and the CLI that has it writes
-/// it into every service too.
+/// `--keep-removed` is new after 0.0.7 (residue-cli#55), and the CLI that has
+/// it writes it into every service too.
 const VALUE_OPTIONS: &[&str] = &[
     "--grace",
     "--idle",
@@ -61,8 +61,8 @@ const FLAG_OPTIONS: &[&str] = &["--no-fetch"];
 
 /// residue's defaults for the options a service does not set, from
 /// `residue watch --help` and `residue --help` of 0.0.6 and of 0.0.7. The CLI
-/// owns them (`src/watch.rs` and `src/cli.rs` at the repository root): a change
-/// to one there updates it here in the same pull request.
+/// owns them (`src/watch.rs` and `src/cli.rs` in residue-cli): the pull request
+/// that moves sidecar.lock to a release that changes one updates it here.
 pub const DEFAULT_GRACE: &str = "1h";
 pub const DEFAULT_IDLE: &str = "2d";
 pub const DEFAULT_MIN_FREE: &str = "10";
@@ -72,7 +72,7 @@ pub const DEFAULT_FETCH_EVERY: &str = "30m";
 /// removals never pass one, so it is the trash's retention for both.
 pub const DEFAULT_KEEP_TRASH: &str = "7d";
 /// `--keep-removed` of `residue remove` and of `watch` (`cli::DEFAULT_KEEP_REMOVED`
-/// at the root): how long a removal record is kept. The app's own removals
+/// in residue-cli): how long a removal record is kept. The app's own removals
 /// never pass one; a service that does not set one forgets records after it.
 pub const DEFAULT_KEEP_REMOVED: &str = "30d";
 /// The first release whose `watch` fetches (`--fetch-every`, `--no-fetch`).

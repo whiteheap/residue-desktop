@@ -179,7 +179,7 @@ export function Restore({
   const keepSeconds = keepTrash ? durationSeconds(keepTrash) : null;
   const failed = (listings ?? []).filter((l) => l.error);
   const listErrors = (listings ?? []).flatMap((l) => l.document?.errors ?? []);
-  // Each record keeps the --keep-removed it was written with (#55): the app's removals write residue's default, automatic cleanup the
+  // Each record keeps the --keep-removed it was written with (residue-cli#55): the app's removals write residue's default, automatic cleanup the
   // service's own, and a later removal forgets a record only once it is
   // older than both that value and the removal's own.
   const appKeep = keepRemoved

@@ -1,6 +1,7 @@
-// The residue CLI's JSON documents, as the CLI in this repository prints
-// them. These are the contract between the CLI and the window: the window
-// shows them and never decides on its own what is safe to remove.
+// The residue CLI's JSON documents, as the residue-cli release that
+// sidecar.lock pins prints them. These are the contract between the CLI and
+// the window: the window shows them and never decides on its own what is
+// safe to remove.
 
 export type Verdict = "candidate" | "keep" | "unknown" | "stale";
 export type CheckStatus = "pass" | "block" | "unknown";
@@ -76,9 +77,9 @@ export interface Worktree {
 
 export interface FreeSpace {
   /**
-   * The filesystem's device number as a decimal string (#45). Repositories
-   * with the same one share a disk, within one scan only. An older residue
-   * does not send it.
+   * The filesystem's device number as a decimal string (residue-cli#45).
+   * Repositories with the same one share a disk, within one scan only. An
+   * older residue does not send it.
    */
   device?: string;
   free_bytes: number;
@@ -232,7 +233,7 @@ export interface RemoveDocument {
   errors: string[];
   /** Records residue could not read or forget, or a ledger it could not write; never a reason the run failed. */
   warnings: string[];
-  /** What this run freed and moved, and residue's total from its stats ledger (#38). */
+  /** What this run freed and moved, and residue's total from its stats ledger (residue-cli#38). */
   stats: RemoveStats;
 }
 
@@ -262,7 +263,7 @@ export interface Freed extends FreedSum {
   by: Record<FreedBy, FreedSum>;
 }
 
-/** `residue stats --json`: what residue has freed on this machine, from its ledger (#38). */
+/** `residue stats --json`: what residue has freed on this machine, from its ledger (residue-cli#38). */
 export interface StatsDocument {
   schema: "residue.stats/v1";
   version: string;

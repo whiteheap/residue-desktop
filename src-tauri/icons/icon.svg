@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   App icon source: the residue mark (docs/assets/logo-dark.svg in
-  whiteheap/residue, same geometry, unchanged) on a black macOS icon tile.
+  whiteheap/residue-cli, same geometry, unchanged) on a black macOS icon tile.
   Render to a 1024 px PNG, then run `pnpm tauri icon` to make every size.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">

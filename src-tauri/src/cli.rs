@@ -162,8 +162,9 @@ impl Run<'_> {
 /// close-on-exec in a second step. The window's requests run on several
 /// threads at once (`lib.rs`, `blocking`), and a child another thread starts
 /// between the two steps inherits them: then the first child's output ends
-/// only when that other child, and anything it left running, exits (#116).
-/// Under this lock no child starts while another start is making its pipes.
+/// only when that other child, and anything it left running, exits
+/// (residue-cli#116). Under this lock no child starts while another start is
+/// making its pipes.
 ///
 /// The lock covers only the children started here, so this is the one call
 /// of `Command::spawn` in the app, and `clippy.toml` refuses `spawn`,

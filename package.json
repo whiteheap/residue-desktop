@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src bundle.ts vite.config.ts",
     "sidecar": "sh scripts/sidecar.sh",
-    "tauri": "sh scripts/tauri.sh"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@cloudflare/kumo": "2.15.0",
