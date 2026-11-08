@@ -42,3 +42,13 @@ On a machine that runs residue's service, its user's data and service are not te
 - To see the UI from a terminal that cannot record the screen, run `pnpm tauri dev` with `RESIDUE_APP_DEV_SNAPSHOT_DIR=DIR` and write a name into `DIR/request` ([CONTRIBUTING.md](CONTRIBUTING.md#development-builds)).
 
 Then run what CI runs ([CONTRIBUTING.md](CONTRIBUTING.md#checks)). A change to the CLI the app bundles is a change to `sidecar.lock`, checked as the invariants above say.
+
+## Release
+
+The app's version is `version` in `src-tauri/tauri.conf.json`, not residue-cli's. To release X.Y.Z:
+
+1. On a branch, set that `version` to X.Y.Z, and turn `## Unreleased` in `CHANGELOG.md` into a `## X.Y.Z (date)` section. The release notes come from that section, so it opens with what a user gets. Open a pull request: changing `tauri.conf.json` starts the release workflow's dry run, which builds and checks the DMG and prints the notes. Squash merge it.
+2. Tag the merge commit on `main`: `git fetch origin`, check that `origin/main` is that commit, then `git tag -s vX.Y.Z -m "residue-ui X.Y.Z" origin/main` and `git push origin vX.Y.Z`.
+3. `.github/workflows/release.yml` fails unless the tag matches the version. It places the residue-cli release `sidecar.lock` pins with its attestation checked, builds the universal app, and checks the app inside the DMG with `scripts/check-app.sh` and a launch. Then it publishes `residue-macos.dmg` with `SHA256SUMS`, a build-provenance attestation, and notes that name the residue-cli release inside. Check the published DMG with `gh attestation verify residue-macos.dmg --repo whiteheap/residue-ui`.
+
+A pull request that changes the workflow, `scripts/`, `sidecar.lock` or `tauri.conf.json`, and `gh workflow run release.yml --ref BRANCH`, are dry runs that attest and publish nothing.
