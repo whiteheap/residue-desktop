@@ -100,7 +100,7 @@ printf '127.0.0.1 localhost %s\n' "$(hostname)" > "$work/hosts"
 # The setups. Each names its model and its constants; model/mutants names
 # them too. Bounds: two worktrees, two dialog openings, two changes outside
 # the app, and at most one fault in a behavior.
-setups="remove/no-faults remove/reload remove/draw save/outside"
+setups="remove/no-faults remove/reload remove/draw save/outside save/reload"
 
 module_of() {
   case $1 in
@@ -113,7 +113,7 @@ module_of() {
 rules_of() {
   case $1 in
     RemoveFlow) echo "TypeOK OnlyListedWorktreesMove ConfirmSendsTheList OpensOnlyForCanGo ListIsForYourChoice NothingMovedIsTrue OneRemovalAtATime" ;;
-    SaveFlow) echo "TypeOK SaveIsWhatTheDialogShowed ReplacesOnlyWhatItShowed NeverDropsAnArgument WarnedBeforeItDeletes" ;;
+    SaveFlow) echo "TypeOK SaveIsWhatTheDialogShowed ReplacesOnlyWhatItShowed NeverDropsAnArgument WarnedBeforeItDeletes PreviewIsOfTheTickedFolders SaveIsOfTheTickedFolders TheDialogStaysWhileItSaves OneChangeAtATime" ;;
   esac
 }
 
@@ -130,7 +130,17 @@ constants_of() {
       printf '  %s\n' 'W = {"a", "b"}' "Faults = $faults" 'MaxOpens = 2' 'MaxChanges = 2' ;;
     save/outside)
       printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
-        'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' ;;
+        'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' 'Faults = {}' ;;
+    save/reload)
+      # The window starts afresh while a save or turn-off runs: two calls of
+      # the app, one of them from a dialog that is gone. Which folders they
+      # save does not change whether they overlap, so one folder is enough;
+      # with two, every rule held too, in 11,489,267 states (3,437,405
+      # distinct), against 77,392 with one. A terminal and brew change the
+      # service only while no call of the app runs, so they add nothing here
+      # but states.
+      printf '  %s\n' 'Folders = {"A"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 0' \
+        'World = {}' 'Faults = {"reload"}' ;;
     *) echo "check.sh: no setup $1" >&2; exit 2 ;;
   esac
 }

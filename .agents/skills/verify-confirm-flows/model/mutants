@@ -23,3 +23,8 @@ RetryOnChange                  save/outside      ReplacesOnlyWhatItShowed
 SendsTheScreenBasis            save/outside      ReplacesOnlyWhatItShowed
 NoBlockedCheck                 save/outside      NeverDropsAnArgument
 SwitchInstalls                 save/outside      WarnedBeforeItDeletes
+ChoicesWhileBusy               save/outside      PreviewIsOfTheTickedFolders
+ChoicesWhileBusy               save/outside      SaveIsOfTheTickedFolders
+LeaveWhileSaving               save/outside      TheDialogStaysWhileItSaves
+NoChangeGuard                  save/reload       OneChangeAtATime
+NoChangeGuard                  save/reload       ReplacesOnlyWhatItShowed

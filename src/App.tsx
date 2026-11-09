@@ -12,7 +12,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Mark } from "./components/Mark";
 import type { ZoomLevel } from "./components/viz/Treemap";
 import { ErrorPanel, Loading } from "./components/ui";
-import { api } from "./lib/api";
+import { api, changingService } from "./lib/api";
 import { cleanedSinceLastOpen, rememberFreed, sinceLastOpen } from "./lib/freed";
 import { bytes } from "./lib/format";
 import type { Settings } from "./lib/types";
@@ -118,6 +118,10 @@ export function App() {
 
   const go = useCallback(
     (v: View) => {
+      // Every change of screen comes here. A save or turn-off of automatic
+      // cleanup that runs keeps its screen, so its dialog stays to show the
+      // result (#10).
+      if (changingService()) return;
       // Another screen: nothing on it opened a detail.
       opener.current = null;
       setView(v);

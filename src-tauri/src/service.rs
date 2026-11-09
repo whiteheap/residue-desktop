@@ -37,6 +37,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -86,6 +87,8 @@ pub struct Context<'a> {
     pub data_dir: &'a Path,
     pub home: &'a Path,
     pub path_env: &'a OsStr,
+    /// The app's one change of the service at a time (`install`, `uninstall`).
+    pub changes: &'a Changes,
 }
 
 /// What the installed agent runs, read from its plist.
@@ -1056,10 +1059,41 @@ fn watch_args(roots: &[PathBuf], options: &[String], dry_run: bool) -> Vec<OsStr
     args
 }
 
+/// One change of the service at a time, for the app's whole run: `install`
+/// and `uninstall` each hold it (`Changing`) from their start to their
+/// return, and refuse, running nothing, while another holds it. launchd
+/// keeps whichever `residue service install` finished last, so two at once
+/// can leave a service that no dialog showed (#10). The window keeps its
+/// screen while a change runs; this also covers a window drawn afresh, whose
+/// new dialog reads the service before the first change writes it. It does
+/// not cover a quit and a relaunch: the new app starts with none held.
+#[derive(Default)]
+pub struct Changes(AtomicBool);
+
+/// `Changes` held, let go on drop: also when the change returns an error.
+struct Changing<'a>(&'a AtomicBool);
+
+impl Changes {
+    fn start(&self) -> Result<Changing<'_>, CliError> {
+        if self.0.swap(true, Ordering::AcqRel) {
+            return Err(CliError::invalid(
+                "another save or turn-off is still running; try again when it ends",
+            ));
+        }
+        Ok(Changing(&self.0))
+    }
+}
+
+impl Drop for Changing<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Install (or replace) the service for `roots`, passing on the options of
 /// the running service as they are written. `seen` is the basis the window
 /// showed: when a fresh read differs, nothing is installed, and the result
-/// says what changed.
+/// says what changed. Refused while another install or uninstall runs.
 pub fn install(
     ctx: &Context,
     dev: &DevPreview,
@@ -1067,6 +1101,7 @@ pub fn install(
     dry_run: bool,
     seen: &Basis,
 ) -> Result<Save, CliError> {
+    let _one = ctx.changes.start()?;
     if roots.is_empty() {
         return Err(CliError::invalid("choose at least one folder to watch"));
     }
@@ -1144,7 +1179,9 @@ pub fn install(
     })
 }
 
+/// Refused while another install or uninstall runs.
 pub fn uninstall(ctx: &Context, dev: &DevPreview) -> Result<Change, CliError> {
+    let _one = ctx.changes.start()?;
     let args: Vec<OsString> = vec!["service".into(), "uninstall".into()];
     if dev.enabled {
         dev.set(None);

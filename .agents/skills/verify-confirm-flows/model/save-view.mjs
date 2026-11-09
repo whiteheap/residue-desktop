@@ -14,7 +14,7 @@ const saveDialog = (v) => {
   const d = v.dlg;
   if (d.phase === "reading") return "Reading the service";
   if (d.phase === "form") return same(d.shown, read(v)) ? "Shows the service as it is" : "Shows a service that has changed";
-  return v.ins.wrote ? "Saving: written" : "Saving: nothing written yet";
+  return Object.values(v.calls).some((c) => c.own && c.wrote) ? "Saving: written" : "Saving: nothing written yet";
 };
 
 export const state = (v) => {
@@ -27,10 +27,13 @@ export const group = (v) => (v.dlg.kind === "none" ? "screen" : "dialog");
 
 export const colors = { screen: "teal", dialog: "blue" };
 
+// The call whose reply arrives: the one that has settled.
+const settled = (f) => Object.values(f.calls).find((c) => ["landed", "changed", "failed"].includes(c.phase));
+
 const reply = (f) =>
-  f.ins.phase === "landed"
+  settled(f).phase === "landed"
     ? "the dialog closes"
-    : f.ins.phase === "changed"
+    : settled(f).phase === "changed"
       ? "residue refuses: the service changed"
       : "the call fails";
 
@@ -38,17 +41,24 @@ const labels = {
   ScreenReads: () => "the screen reads the service",
   YouOpenSave: (f) => (f.svc.on ? "you click Change folders" : "you turn it on"),
   DialogReads: () => "the dialog reads the service",
+  YouTick: () => "you tick a folder",
+  YouPreview: () => "you click Preview",
+  PreviewLands: () => "the preview lands",
+  PreviewFails: () => "the preview fails",
   YouSave: () => "you save",
   YouOpenTurnOff: () => "you turn it off",
   YouTurnOff: () => "you confirm",
   // Cancel while the dialog reads does what Cancel on the form does.
   YouCancel: (f) => (f.dlg.phase === "reading" ? null : "you cancel"),
+  YouLeave: () => "you go to another screen and back",
   InstallChecks: () => "residue reads the service again",
   InstallLands: () => "residue service install writes it",
   InstallFails: () => "the save fails",
+  UninstallStarts: () => "the turn-off starts",
   UninstallLands: () => "residue service uninstall removes it",
   UninstallFails: () => "the turn-off fails",
   ReplyArrives: (f) => reply(f),
+  Reload: () => "the window starts afresh",
   TerminalTurnsOn: () => "a terminal turns it on",
   TerminalTurnsOff: () => "a terminal turns it off",
   TerminalChangesFolders: () => "a terminal changes its folders",
