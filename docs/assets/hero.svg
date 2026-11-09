@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The README hero (light). Source of hero.png: run sh docs/assets/render.sh.
+  hero-dark.svg is the same drawing in the dark palette.
+  The headline is the first sentence of the repository's GitHub description;
+  the README's line under the hero is the second.
+  The window is the app's Worktrees screen, drawn in 2 px cells: the sidebar,
+  then each worktree as a tile sized by its space and grouped by repository,
+  bright for can go, gray for kept and hatched for unknown, as the app's map
+  draws them. The app is dark in both palettes. The headline is 42 px so that
+  it stays readable when a phone shows the image about 320 px wide.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 830 360" width="830" height="360" role="img" aria-labelledby="heroTitle">
+  <title id="heroTitle">Reclaim your storage from Git worktrees, in a Mac app.</title>
+  <defs>
+    <pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="4" fill="#1a1a1a"/>
+      <path fill="#6e6e6e" d="M3 0h1v1h-1zM2 1h1v1h-1zM1 2h1v1h-1zM0 3h1v1h-1z"/>
+    </pattern>
+  </defs>
+  <rect x="0.5" y="0.5" width="829" height="359" rx="11.5" fill="#fafafa" stroke="#e5e5e5"/>
+  <g transform="translate(584 104) scale(2)" shape-rendering="crispEdges">
+    <!-- The window: body, title bar, its three buttons, then the edge. -->
+    <path fill="#000000" d="M1 2h110v72h-110zM2 1h108v74h-108z"/>
+    <path fill="#0a0a0a" d="M1 2h110v7h-110zM2 1h108v1h-108z"/>
+    <path fill="#262626" d="M1 9h110v1h-110zM28 10h1v65h-1zM29 22h81v1h-81z"/>
+    <path fill="#4a4a4a" d="M6 3h2v1h1v2h-1v1h-2v-1h-1v-2h1zM12 3h2v1h1v2h-1v1h-2v-1h-1v-2h1zM18 3h2v1h1v2h-1v1h-2v-1h-1v-2h1z"/>
+    <path fill="#3a3a3a" d="M2 0h108v1h-108zM2 75h108v1h-108zM0 2h1v72h-1zM111 2h1v72h-1zM1 1h1v1h-1zM110 1h1v1h-1zM1 74h1v1h-1zM110 74h1v1h-1z"/>
+    <!-- The sidebar: the mark and the name, Worktrees chosen, four more screens, the two versions. -->
+    <path fill="#f5f5f5" d="M4 13h6v1h-6zM6 17h2v2h-2z"/>
+    <path fill="#c2c2c2" d="M4 14h6v1h-6z"/>
+    <path fill="#8f8f8f" d="M4 15h6v1h-6z"/>
+    <path fill="#e5e5e5" d="M12 14h11v2h-11z"/>
+    <path fill="#1f1f1f" d="M3 21h23v6h-23z"/>
+    <path fill="#f5f5f5" d="M5 23h2v2h-2zM9 23h9v1h-9z"/>
+    <path fill="#8a8a8a" d="M5 30h2v2h-2zM9 30h7v1h-7zM5 37h2v2h-2zM9 37h14v1h-14zM5 44h2v2h-2zM9 44h5v1h-5zM5 51h2v2h-2zM9 51h7v1h-7z"/>
+    <path fill="#6e6e6e" d="M21 23h4v1h-4zM4 67h10v1h-10zM4 70h7v1h-7z"/>
+    <!-- The screen's title and folder, and its Scan again button. -->
+    <path fill="#f5f5f5" d="M33 13h18v2h-18z"/>
+    <path fill="#8a8a8a" d="M33 17h26v1h-26zM33 25h7v1h-7zM66 25h7v1h-7zM94 25h8v1h-8z"/>
+    <path fill="#333333" d="M92 12h16v1h-16zM92 19h16v1h-16zM92 13h1v6h-1zM107 13h1v6h-1z"/>
+    <path fill="#d4d4d4" d="M95 15h2v2h-2zM98 15h7v1h-7z"/>
+    <!-- The map: three repositories, each worktree a tile sized by its space. -->
+    <path fill="#f5f5f5" d="M33 28h19v25h-19zM53 28h10v28h-10zM65 28h20v27h-20zM86 52h6v20h-6zM94 28h14v22h-14zM94 51h14v10h-14z"/>
+    <path fill="#666666" d="M33 54h19v18h-19zM53 57h10v15h-10zM65 56h20v16h-20zM94 62h14v10h-14z"/>
+    <rect x="86" y="28" width="6" height="23" fill="url(#hatch)"/>
+    <path fill="#0a0a0a" d="M35 30h11v1h-11zM35 32h5v1h-5zM55 30h6v1h-6zM55 32h4v1h-4zM67 30h12v1h-12zM67 32h5v1h-5zM96 30h6v1h-6zM96 32h5v1h-5zM96 53h5v1h-5zM96 55h4v1h-4zM87 54h4v1h-4z"/>
+    <path fill="#f5f5f5" d="M35 56h10v1h-10zM35 58h5v1h-5zM55 59h6v1h-6zM55 61h4v1h-4zM67 58h10v1h-10zM67 60h5v1h-5zM96 64h7v1h-7zM96 66h4v1h-4z"/>
+  </g>
+  <text fill="#0a0a0a" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="42" letter-spacing="-0.42">
+    <tspan x="56" y="138.1">Reclaim your storage</tspan>
+    <tspan x="56" y="190.1">from Git worktrees,</tspan>
+    <tspan x="56" y="242.1">in a Mac app.</tspan>
+  </text>
+</svg>
