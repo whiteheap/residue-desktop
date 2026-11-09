@@ -591,6 +591,10 @@ function SaveForm({
   const settings = plan.settings;
   const low = diskLow(settings);
   const changes = current ? changedSettings(current, plan) : [];
+  // Preview runs on the folders ticked at its click, Save on those and the
+  // mode, so nothing changes them until the run ends: the preview shown ran
+  // on the folders shown, and a save installs what the dialog shows (#9).
+  const locked = working !== null;
 
   const add = async () => {
     const picked = await openDialog({ directory: true, multiple: true, title: "Folders to watch" });
@@ -670,10 +674,11 @@ function SaveForm({
             key={root}
             label={tilde(root, home)}
             checked={chosen.has(root)}
+            disabled={locked}
             onCheckedChange={(on) => toggle(root, on === true)}
           />
         ))}
-        <Button variant="ghost" size="sm" icon={<FolderPlus />} onClick={add}>
+        <Button variant="ghost" size="sm" icon={<FolderPlus />} disabled={locked} onClick={add}>
           Add a folder…
         </Button>
       </fieldset>
@@ -681,6 +686,7 @@ function SaveForm({
       <Checkbox
         label="Log only, remove nothing (--dry-run)"
         checked={dryRun}
+        disabled={locked}
         onCheckedChange={(on) => setDryRun(on === true)}
       />
 

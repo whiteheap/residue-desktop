@@ -30,19 +30,21 @@ stateDiagram-v2
   s2 --> s10: you turn it off
   s2 --> s4: you click Change folders
   s4 --> s5: the dialog reads the service
-  s10 --> s2: you cancel
+  s4 --> s1: you go to another screen and back
+  s10 --> s2: you cancel or you go to another screen and back
   s10 --> s11: you confirm
-  s5 --> s1: you cancel
+  s4 --> s2: you go to another screen and back
+  s5 --> s1: you cancel or you go to another screen and back
   s5 --> s6: you save
   s5 --> s7: a terminal turns it on
-  s5 --> s2: you cancel
+  s5 --> s2: you cancel or you go to another screen and back
   s11 --> s10: the call fails
-  s11 --> s1: the dialog closes
-  s7 --> s2: you cancel
+  s7 --> s2: you cancel or you go to another screen and back
   s7 --> s6: you save
   s6 --> s5: the call fails or residue refuses: the service changed
-  s10 --> s1: you cancel
   s6 --> s8: residue service install writes it
+  s11 --> s1: the dialog closes
+  s10 --> s1: you cancel or you go to another screen and back
   s8 --> s7: the call fails
   s8 --> s2: the dialog closes
   s8 --> s5: the call fails

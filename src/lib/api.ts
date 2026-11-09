@@ -38,6 +38,27 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
+// Calls of `service_install` and `service_uninstall` that have not settled.
+let changing = 0;
+
+async function change<T>(run: () => Promise<T>): Promise<T> {
+  changing += 1;
+  try {
+    return await run();
+  } finally {
+    changing -= 1;
+  }
+}
+
+/**
+ * Whether a save or a turn-off of automatic cleanup runs. It counts the
+ * call, not the dialog that made it, so it still holds when App draws itself
+ * afresh. App keeps the screen while it holds: leaving would close the
+ * dialog while the call runs on, and its result would show nowhere (#10).
+ * src-tauri refuses a second change while one runs (`service.rs`, `Changes`).
+ */
+export const changingService = () => changing > 0;
+
 export const api = {
   appInfo: () => call<AppInfo>("app_info"),
   settings: () => call<Settings>("get_settings"),
@@ -52,8 +73,8 @@ export const api = {
   serviceStatus: () => call<ServiceStatus>("service_status"),
   /** `basis` is the one the dialog showed; a fresh read that differs installs nothing. */
   serviceInstall: (roots: string[], dryRun: boolean, basis: ServiceBasis) =>
-    call<ServiceSave>("service_install", { roots, dryRun, basis }),
-  serviceUninstall: () => call<ServiceChange>("service_uninstall"),
+    change(() => call<ServiceSave>("service_install", { roots, dryRun, basis })),
+  serviceUninstall: () => change(() => call<ServiceChange>("service_uninstall")),
   servicePreview: (roots: string[]) => call<ServicePreview>("service_preview", { roots }),
   stats: () => call<StatsDocument>("stats"),
 };

@@ -34,6 +34,8 @@ struct State {
     config_dir: PathBuf,
     data_dir: PathBuf,
     dev: service::DevPreview,
+    /// The one save or turn-off of automatic cleanup that runs.
+    changes: service::Changes,
     /// The bundled residue's version, once a read has given it.
     version: Mutex<Option<String>>,
 }
@@ -106,6 +108,7 @@ impl State {
             data_dir: &self.data_dir,
             home: &self.home,
             path_env: &env::path().0,
+            changes: &self.changes,
         }
     }
 }
@@ -427,6 +430,7 @@ pub fn run() {
                 config_dir: paths.app_config_dir()?,
                 data_dir: paths.app_local_data_dir()?,
                 dev: service::DevPreview::from_env(),
+                changes: service::Changes::default(),
                 version: Mutex::new(None),
             };
             app.manage(Arc::new(state));
