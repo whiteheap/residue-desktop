@@ -109,8 +109,12 @@ function restoredText(doc: RestoreDocument, item: Restorable, home: string | und
         return `on its branch ${branch ?? ""}`;
       case "recreated_branch":
         return `${branch ?? "its branch"} had been deleted, so restore created it again at the recorded HEAD`;
-      case "new_branch":
-        return `${branch ?? "its branch"} no longer contains the recorded HEAD, so restore created ${done.new_branch ?? "a new branch"} there; ${branch ?? "the branch"} is unchanged`;
+      case "new_branch": {
+        // `branch` is the new branch here; the recorded one is the item's.
+        const recorded = shortBranch(item.branch) ?? "its branch";
+        const made = done.new_branch ?? branch;
+        return `on ${made ? `the new branch ${made}` : "a new branch"} at the recorded HEAD: ${recorded} no longer contains it or is checked out in another worktree, and is unchanged`;
+      }
       case "detached":
         return `detached at ${shortHead(done.head) ?? "the recorded HEAD"}, as it was`;
       case "already_back":
@@ -380,8 +384,10 @@ export function Restore({
                 <details className="viz-details">
                   <summary>How restore and forgetting work</summary>
                   <p className="hint">
-                    Restore recreates the worktree with git worktree add, on its branch and HEAD, and
-                    refuses when something is at its path. A removal record takes almost no space.{" "}
+                    Restore recreates the worktree with git worktree add, on its branch and HEAD, or on a
+                    new branch at that HEAD when its branch no longer contains it or is checked out
+                    elsewhere. It refuses when something is at its path. A removal record takes almost no
+                    space.{" "}
                     <FlagWords text={forgets} />
                   </p>
                 </details>

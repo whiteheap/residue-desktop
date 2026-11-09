@@ -9,7 +9,7 @@
 # - copy each macOS archive's checksum from that release's SHA256SUMS;
 # - read the release's CHANGELOG entry, and update what the app says about
 #   residue's behavior in the same pull request (AGENTS.md, "Invariants").
-version=0.0.10
-attested_as=whiteheap/residue
-sha256_aarch64-apple-darwin=271a70f5b161561e0800a8a11611bea829c850fb8c1a1dc14e98f67d05a698da
-sha256_x86_64-apple-darwin=f6a29012c53bf5ab52dd0b94dff5e33ae39b0ae7d38bd6e36bd7f62859ecc258
+version=0.0.11
+attested_as=whiteheap/residue-cli
+sha256_aarch64-apple-darwin=7adb436af9ae8937561dd9d46b2a7a133e3c6f6701b6963ad6a6da91fac37fb3
+sha256_x86_64-apple-darwin=deee6f3d630f21fb6154760c61192ef057f22b948243ca2a76c4f36115b75e60
