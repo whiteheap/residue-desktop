@@ -2,14 +2,12 @@
 # breaks in a setup, with TLC's shortest path to it (the actions, after
 # the initial state). Every rule not listed holds. A line goes only when
 # the code it describes changed, with the reason in the same change.
-
-# Finding 1. A second confirmed run can start while the first still runs.
-# The window starts afresh while `residue remove --trash --yes` runs (a
-# quit and a relaunch, which can leave residue running, or the last-resort
-# "Try again", which draws App anew), or the dialog fails to draw while it
-# shows Moving and its Close returns to the list. Either way the worktree
-# still shows as can go, and nothing in the app or in src-tauri knows that
-# a run is in flight. Each run still sends only the worktrees its own list
-# showed, and residue checks each one again (SKILL.md, "Findings").
-remove/reload OneRemovalAtATime: YouTick YouClickMove PlanLands YouConfirm Reload ScanLands YouTick YouClickMove PlanLands YouConfirm
-remove/draw OneRemovalAtATime: YouTick YouClickMove PlanLands YouConfirm DrawFails YouCloseBrokenDialog YouClickMove PlanLands YouConfirm
+#
+# No rule breaks. Finding 1, a second confirmed run while the first still
+# runs (OneRemovalAtATime in remove/reload and remove/draw), left with the
+# fix for #12: src-tauri holds a confirmed run from before residue starts
+# until it returns and refuses a second one meanwhile, and keeps a marker
+# naming residue's process, which a relaunched app reads
+# (src-tauri/src/removal.rs). The window asks src-tauri when it starts and
+# when the removal dialog closes, and keeps Move to the trash off until
+# that run ends (SKILL.md, "Findings").

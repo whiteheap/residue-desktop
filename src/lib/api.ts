@@ -67,6 +67,14 @@ export const api = {
   explain: (path: string) => call<ExplainDocument>("explain", { path }),
   planRemoval: (paths: string[]) => call<Removal>("plan_removal", { paths }),
   removeToTrash: (paths: string[]) => call<Removal>("remove_to_trash", { paths }),
+  /**
+   * Whether a confirmed removal runs: this window's, or one src-tauri still
+   * holds after the window started afresh or the app opened again (#12).
+   * src-tauri refuses a second one while one runs (`removal.rs`).
+   */
+  removalRunning: () => call<boolean>("removal_running"),
+  /** Settles once no confirmed removal runs. */
+  waitForRemoval: () => call<void>("wait_for_removal"),
   listRestorable: (roots: string[]) => call<Listing[]>("list_restorable", { roots }),
   restore: (entryPath: string, root: string) =>
     call<RestoreDocument>("restore", { entryPath, root }),

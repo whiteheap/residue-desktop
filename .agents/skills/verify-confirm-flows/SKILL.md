@@ -1,11 +1,11 @@
 ---
 name: verify-confirm-flows
-description: Model-check every order of your clicks, residue's replies and changes outside the app in the two flows where the app moves or deletes something, moving worktrees to the trash and turning automatic cleanup on, saving its folders or turning it off, to show whether any order moves a worktree the confirm did not list or installs a service the dialog did not show. Use before you merge a change to src/views/RemoveDialog.tsx, the removal dialog's wiring or `go` in src/App.tsx, `changingService` in src/lib/api.ts, `chosen` or the checkboxes in src/views/Worktrees.tsx, the move button in src/views/Detail.tsx, `remove`, `plan_removal` or `remove_to_trash` in src-tauri/src/lib.rs, `Basis`, `read`, `plan`, `install`, `uninstall` or `Changes` in src-tauri/src/service.rs, or the save and turn-off dialogs in src/views/Automatic.tsx, and when someone asks whether a click can move or delete more than the app showed.
+description: Model-check every order of your clicks, residue's replies and changes outside the app in the two flows where the app moves or deletes something, moving worktrees to the trash and turning automatic cleanup on, saving its folders or turning it off, to show whether any order moves a worktree the confirm did not list or installs a service the dialog did not show. Use before you merge a change to src/views/RemoveDialog.tsx, the removal dialog's wiring, `watchRemoval` or `go` in src/App.tsx, `changingService` in src/lib/api.ts, `chosen`, the checkboxes or the move buttons in src/views/Worktrees.tsx and src/views/Detail.tsx, `remove`, `plan_removal`, `remove_to_trash`, `removal_running` or `wait_for_removal` in src-tauri/src/lib.rs, src-tauri/src/removal.rs, `Basis`, `read`, `plan`, `install`, `uninstall` or `Changes` in src-tauri/src/service.rs, or the save and turn-off dialogs in src/views/Automatic.tsx, and when someone asks whether a click can move or delete more than the app showed.
 ---
 
 # Verify the confirm flows
 
-The app moves worktrees to the trash in two runs of residue: a plan that moves nothing, then, after your click, the same command with `--yes` and the planned paths. It saves automatic cleanup from a dialog that reads the service, shows it, and sends that read back, so that `install` installs nothing when the service has changed. Between those steps you can click, residue can reply late or fail, the window can start afresh, and a terminal or `brew upgrade` can change the service. This check tries every order of those steps, for two worktrees and for two folders, and says which of fourteen rules any order breaks.
+The app moves worktrees to the trash in two runs of residue: a plan that moves nothing, then, after your click, the same command with `--yes` and the planned paths. It saves automatic cleanup from a dialog that reads the service, shows it, and sends that read back, so that `install` installs nothing when the service has changed. Between those steps you can click, residue can reply late or fail, the window can start afresh or the app quit and open again, and a terminal or `brew upgrade` can change the service. This check tries every order of those steps, for two worktrees and for two folders, and says which of fourteen rules any order breaks.
 
 It is two TLA+ models of the app, `model/RemoveFlow.tla` and `model/SaveFlow.tla`, checked with TLC. TLC does not read the TypeScript or the Rust: a model holds only while it describes the code, which is why the coverage table and the sync commit below exist.
 
@@ -65,8 +65,9 @@ Moving to the trash: two worktrees, each one residue would move now (can go) or 
 
 - You: tick a worktree, click "Move N to the trash..." on the action bar, open a worktree's checks and click "Move this worktree to the trash...", scan again, confirm, or close the dialog.
 - residue: the plan lands or fails; the confirmed run moves what can still go, then its report lands or the run fails.
+- src-tauri (`removal.rs`, #12): it refuses a confirm while a confirmed run is in flight, also one an earlier launch of the app left running. It answers the window's ask whether one is, made when the window starts and when the dialog closes, and the window's wait for it to end. The ask or the wait can fail.
 - Outside the app: a worktree turns from can go to keep or back (a commit, a branch that lands), twice at most.
-- Faults, at most one: the window starts afresh while residue runs (a quit and a relaunch, or the last-resort "Try again" in `src/main.tsx`), or the dialog fails to draw.
+- Faults, at most one: the window starts afresh while residue runs, from the last-resort "Try again" in `src/main.tsx`, which keeps src-tauri's state, or from a quit and a relaunch, which starts it anew and reads the marker; or the dialog fails to draw.
 
 Automatic cleanup: two folders, the app scanning one of them, a service that starts off or on with options set, and these steps:
 
@@ -77,13 +78,13 @@ Automatic cleanup: two folders, the app scanning one of them, a service that sta
 
 | Setup | Model | Faults | States | Distinct states |
 | --- | --- | --- | --- | --- |
-| `remove/no-faults` | RemoveFlow | none | 99,989 | 32,396 |
-| `remove/reload` | RemoveFlow | the window starts afresh | 817,019 | 188,823 |
-| `remove/draw` | RemoveFlow | the dialog fails to draw | 756,437 | 186,118 |
+| `remove/no-faults` | RemoveFlow | none | 171,405 | 46,464 |
+| `remove/reload` | RemoveFlow | the window starts afresh, or the app quits and opens again | 2,758,623 | 521,382 |
+| `remove/draw` | RemoveFlow | the dialog fails to draw | 1,335,889 | 274,416 |
 | `save/outside` | SaveFlow | none; every outside change | 8,907,360 | 2,878,776 |
 | `save/reload` | SaveFlow | the window starts afresh while a save or turn-off runs; one folder, no outside change | 77,392 | 24,243 |
 
-Each setup opens a dialog at most twice. The counts for `remove/reload` and `remove/draw` are of the run without `OneRemovalAtATime`, which breaks there: TLC stops at a rule's first break and reports the shortest path, so check.sh checks the other rules again without it. A rule that breaks in a setup is therefore not checked further there; a new way to break it shows only if it is shorter.
+Each setup opens a dialog at most twice. Every rule holds in every setup, so each count is of one run with every rule. When a rule breaks, TLC stops at its first break and reports the shortest path, and check.sh checks the other rules again without it: a rule that breaks in a setup is not checked further there, and a new way to break it shows only if it is shorter.
 
 Assumptions:
 
@@ -92,8 +93,10 @@ Assumptions:
 - Each dialog is modal, and App ignores Command keys while the removal dialog is open (`if (removing) return`). The `NotModal` mutant shows what that guard keeps. Command-1 to 5 still reach `go` while the save dialog is open; `go` refuses another screen while a save or turn-off runs (`changingService`), and `LeaveWhileSaving` shows what that keeps.
 - "Add a folder…" opens the folder picker as a sheet on the window (tauri-plugin-dialog sets the window as its parent; rfd then calls `beginSheetModalForWindow`), which takes no other click while it is open, so adding a folder is one step.
 - residue checks every path again on each run and moves only what can still go. The model trusts it; residue-cli's `verify-removal-races` checks residue.
+- A confirmed run replies after residue exited: `cli.rs` waits for it, and at the deadline stops it and waits. When that wait fails, residue may still run, and src-tauri keeps the run in flight until its process ends (`removal.rs`, `Left`).
+- src-tauri's answer to the window's ask is read when it lands. While the window asks, Move to the trash is off, so no run starts in between; a run that ends in between can only shorten the wait.
 - A terminal or brew changes the service only while no `install` or `uninstall` call of the app runs.
-- One window.
+- One window, and one copy of the app at a time.
 
 ## When a change touches the verified code
 
@@ -101,16 +104,18 @@ Run the check for a change to any function in this table, or for one that adds a
 
 | Model actions | Code |
 | --- | --- |
-| `YouTick`, `Chosen`, `YouClickMove` | `Worktrees.tsx`: the row checkbox, shown only for a candidate, select-all, `chosen` (the ticked paths the shown scan calls candidates), the action bar's `onRemove(chosen)` |
-| `YouOpenChecks`, `ChecksLand`, `YouLeaveChecks`, `YouClickMoveInChecks` | `Detail.tsx`: the checks (`residue explain`) and "Move this worktree to the trash...", shown only for verdict `candidate` |
+| `YouTick`, `Chosen`, `YouClickMove`, `MoveOn` | `Worktrees.tsx`: the row checkbox, shown only for a candidate, select-all, `chosen` (the ticked paths the shown scan calls candidates), the action bar's `onRemove(chosen)`, `disabled` unless `inFlight` is "none" |
+| `YouOpenChecks`, `ChecksLand`, `YouLeaveChecks`, `YouClickMoveInChecks` | `Detail.tsx`: the checks (`residue explain`) and "Move this worktree to the trash...", shown only for verdict `candidate` and `disabled` unless `inFlight` is "none" |
 | `YouRescan`, `ScanLands` | `App.tsx` `rescan`, Command-R; `useCli` |
 | `Open` | `App.tsx` `setRemoving`, which mounts `RemoveDialog` |
 | `PlanLands`, `PlanFails` | `RemoveDialog.tsx` the effect on `paths` with `live`; `lib.rs` `plan_removal`, `remove(..., confirmed = false)`; `ready`, the results `skipped` with verdict `candidate` |
-| `YouConfirm` | `RemoveDialog.tsx` `confirm`; the confirm button, `disabled={running}`, sends `ready` |
-| `RunMoves`, `RunLands`, `RunFails` | `lib.rs` `remove_to_trash`, `remove(..., confirmed = true)`, the one call that adds `--yes`; `cli.rs` `Run::output` and its deadline; `confirm`'s `.then` and `.catch`; `App.tsx` `onRemoved` |
-| `YouClose` | `RemoveDialog.tsx` `onOpenChange` and `busy` |
-| `DrawFails`, `YouCloseBrokenDialog` | `App.tsx` the removal dialog's `ErrorBoundary` and its `onClose` |
-| `Reload` | `main.tsx` the last-resort `ErrorBoundary`; in RemoveFlow also a quit and a relaunch, in SaveFlow a page that loads again |
+| `YouConfirm`, `InFlight` | `RemoveDialog.tsx` `confirm`; the confirm button, `disabled={running}`, sends `ready`; `lib.rs` `remove`, which calls `s.removals.start()` before residue starts; `removal.rs` `Removals::start`, refused with kind `invalid` while a removal is in flight, and `InFlight::next`; the dialog's text for kind `invalid` |
+| `RunMoves`, `RunLands`, `RunFails` | `lib.rs` `remove_to_trash`, `remove(..., confirmed = true)`, the one call that adds `--yes`; `cli.rs` `Run::output_with` and its deadline; `removal.rs` `Removing::record`, which writes the marker, and `Removing`'s drop on return; `confirm`'s `.then` and `.catch`; `App.tsx` `onRemoved` |
+| `YouClose` | `RemoveDialog.tsx` `onOpenChange` and `busy`; `App.tsx` the dialog's `onClose`, which calls `watchRemoval` |
+| `HeardLands`, `RemovalEnds`, `HeardFails` | `App.tsx` `watchRemoval`, `asks`, `heard`, and the effect that calls `api.removalRunning()`, then `api.waitForRemoval()`, `rescan` and `reloadStats`, with its `.catch`; `lib.rs` `removal_running`, `wait_for_removal`; `removal.rs` `Removals::running`, `wait`, `refresh` and `Process::runs` |
+| `DrawFails`, `YouCloseBrokenDialog` | `App.tsx` the removal dialog's `ErrorBoundary` and its `onClose`, which scans again and calls `watchRemoval` |
+| `TryAgain`, `Reload` | `main.tsx` the last-resort `ErrorBoundary`, which draws App anew while src-tauri's `State` runs on; in SaveFlow (`Reload`) also a page that loads again |
+| `Relaunch` | A quit and a relaunch: `lib.rs` `run`'s setup, a new `State` whose `Removals::open` reads the marker (`removal.rs`, `read_marker`, `process`) |
 | `ScreenReads` | `Automatic.tsx` `useCli("service:...")`, Refresh, `closeSave` |
 | `YouOpenSave`, `YouOpenTurnOff` | `Automatic.tsx` the switch's `onChange` and "Change folders" (`setDialog`) |
 | `DialogReads` | `TurnOnDialog` `useCli("save-dialog")`; `service.rs` `read`, `plan` |
@@ -126,13 +131,13 @@ Run the check for a change to any function in this table, or for one that adds a
 | `ReplyArrives` | `SaveForm` `install`'s result: `onChanged`; for `changed`, the fresh read through `onAdopt` and `adopted`; `onFailed` |
 | `Change`, `Terminal...`, `BrewUpgrade` | No code: a commit or a branch outside the app; `residue service install` or `uninstall` in a terminal; `brew upgrade` |
 
-Sync commit: `924755a383338ba63e6e37ba64187590f6ad3ef5`. The models were last confirmed to describe the code above at that commit, on 2026-11-09. Move it forward only after you confirm, for each covered function a change touched, that the model still describes it. `git diff 924755a383 -- src/main.tsx src/App.tsx src/lib/api.ts src/views/RemoveDialog.tsx src/views/Worktrees.tsx src/views/Detail.tsx src/views/Automatic.tsx src-tauri/src/lib.rs src-tauri/src/service.rs src-tauri/src/cli.rs` lists what to read. The change that fixed #9 and #10 is in that diff and was confirmed with it: `go` and `changingService`, the save form's `locked`, and `Changes` in `service.rs` and `lib.rs`.
+Sync commit: `dfe663c64b293afa71a0b6d70f7474e98a39e6a9`, the fix for #9 and #10, which was confirmed against the models. The models were last confirmed to describe the code above at that commit, on 2026-11-09. Move it forward only after you confirm, for each covered function a change touched, that the model still describes it. `git diff dfe663c64b -- src/main.tsx src/App.tsx src/lib/api.ts src/views/RemoveDialog.tsx src/views/Worktrees.tsx src/views/Detail.tsx src/views/Automatic.tsx src-tauri/src/lib.rs src-tauri/src/service.rs src-tauri/src/cli.rs src-tauri/src/removal.rs` lists what to read. The change that fixed #12 is in that diff and was confirmed with it: `Removals` in `removal.rs` and `lib.rs`, `removal_running` and `wait_for_removal`, `Run::output_with` in `cli.rs`, `watchRemoval` in `App.tsx`, the move buttons' `inFlight` in `Worktrees.tsx` and `Detail.tsx`, and the dialog's text for kind `invalid`.
 
 ## Read a result
 
 Read every result with `/statechart`. Give it a model, its chart config and its view: `model/RemoveFlow.tla` with `model/RemoveChart.cfg` and `model/remove-view.mjs`, or `model/SaveFlow.tla` with `model/SaveChart.cfg` and `model/save-view.mjs`. It tells a break as numbered steps in plain words, such as "you confirm", with the window's state after each, and draws a chart of a setup that passes. For a setup or a mutant, copy a chart config and set its constants and `Broken` as check.sh's `constants_of` and `model/mutants` do.
 
-The two charts it drew are `model/remove.mmd` (one worktree: 10 states, 14 arrows) and `model/save.mmd` (one folder and a terminal that can turn the service on: 9 states, 24 arrows; `SaveChart.cfg` bounds it with `ChartBound` to a folder ticked and no preview, which keeps it under the 500 states `/statechart` draws, since a preview stays in "Shows the service as it is"). They hide steps that change nothing you see: nothing left to happen (`Finished`), Cancel while the save dialog reads (it does what Cancel on the form does), and steps within one state, such as a tick. Draw them again when a model or a view changes.
+The two charts it drew are `model/remove.mmd` (one worktree: 10 states, 14 arrows) and `model/save.mmd` (one folder and a terminal that can turn the service on: 9 states, 24 arrows; `SaveChart.cfg` bounds it with `ChartBound` to a folder ticked and no preview, which keeps it under the 500 states `/statechart` draws, since a preview stays in "Shows the service as it is"). They hide steps that change nothing you see: nothing left to happen (`Finished`), Cancel while the save dialog reads (it does what Cancel on the form does), and steps within one state, such as a tick or the app's ask whether a removal runs. Draw them again when a model or a view changes. The fix for #12 left `remove.mmd` as it was. `RemoveChart.cfg` has no fault, so no removal runs when the window asks and none is refused. There the model reaches the same 125 states as before once `heard` and `app` are set aside (TLC with a `VIEW` of the other variables), and the steps the fix adds change only `heard`, so the chart has the same states and arrows.
 
 In check.sh's output:
 
@@ -141,7 +146,7 @@ In check.sh's output:
 - `mutant NAME: NOT caught` means the model no longer depends on that guard of the code.
 - `no control` means the mutant's rule already breaks in its setup without the mutant, so the line shows nothing.
 
-Each mutant in `model/mutants` removes one guard the code has, to show that a rule depends on it. check.sh prints the shortest path to each break.
+Each mutant in `model/mutants` removes one guard the code has, or two joined by `+`, to show that a rule depends on it. check.sh prints the shortest path to each break.
 
 | Mutant | The guard it removes | Rule that breaks |
 | --- | --- | --- |
@@ -151,8 +156,11 @@ Each mutant in `model/mutants` removes one guard the code has, to show that a ru
 | `ChecksButtonForEveryVerdict` | the checks show the move button only for a candidate | `OpensOnlyForCanGo` |
 | `NotModal` | the dialog is modal | `ListIsForYourChoice` |
 | `RunErrorSaysNothingMoved` | a failed run keeps the plan and says to scan again | `NothingMovedIsTrue` |
-| `ConfirmTwice` | the confirm is disabled while the run runs | `OneRemovalAtATime` |
-| `CloseWhileBusy` | the dialog does not close while it plans or runs (`busy`) | `OneRemovalAtATime` |
+| `ConfirmTwice+ConfirmWhileBusy` | the confirm is disabled while the run runs, with src-tauri's refusal gone too | `OneRemovalAtATime` |
+| `CloseWhileBusy+ConfirmWhileBusy` | the dialog does not close while it plans or runs (`busy`), with src-tauri's refusal gone too | `OneRemovalAtATime` |
+| `NoRunGuard` | src-tauri holds this app's confirmed run from before residue starts until `remove` returns (`Removals`), so it refuses a second one and tells the window that one runs; run in `remove/draw` and `remove/reload` | `OneRemovalAtATime` |
+| `NoMarker` | the marker naming residue's process, which an app that opens again reads (`Removals::open`); run in `remove/reload` | `OneRemovalAtATime` |
+| `ConfirmWhileBusy` | src-tauri refuses a confirm while a removal is in flight (`Removals::start`); run in `remove/draw` and `remove/reload`, where an ask that fails turns Move to the trash on | `OneRemovalAtATime` |
 | `NoBasisCheck` | `install` compares its read with the basis the dialog sent | `ReplacesOnlyWhatItShowed`, `SaveIsWhatTheDialogShowed` |
 | `BasisWithoutMode` | the basis holds the service's `--dry-run` | `ReplacesOnlyWhatItShowed` |
 | `BasisWithoutVersion` | the basis holds the version a save installs with | `SaveIsWhatTheDialogShowed` |
@@ -164,7 +172,7 @@ Each mutant in `model/mutants` removes one guard the code has, to show that a ru
 | `LeaveWhileSaving` | `go` keeps the screen while a save or turn-off runs | `TheDialogStaysWhileItSaves` |
 | `NoChangeGuard` | `install` and `uninstall` refuse while another runs (`Changes`); run in `save/reload` | `OneChangeAtATime`, `ReplacesOnlyWhatItShowed` |
 
-Two guards have no mutant of their own, because another guard backs each one and removing either alone breaks no rule. The checkbox shown only for a candidate is backed by `chosen`, and the Save button disabled for a blocked plan is backed by `install`'s own check. `ChosenUnfiltered` and `NoBlockedCheck` remove the backing guard, with the first still in place.
+Some guards are backed by another, so removing one alone breaks no rule. The checkbox shown only for a candidate is backed by `chosen`, and the Save button disabled for a blocked plan is backed by `install`'s own check: `ChosenUnfiltered` and `NoBlockedCheck` remove the backing guard, with the first still in place. src-tauri's refusal backs three guards of the window: the confirm disabled while the run runs, the dialog that stays while it runs, and Move to the trash off while a removal runs (`MoveOn`). The first two keep the rule once the refusal is gone, as `ConfirmTwice+ConfirmWhileBusy` and `CloseWhileBusy+ConfirmWhileBusy` show. `MoveOn` has no mutant: an ask that fails turns Move to the trash on, so `MoveOn` cannot keep the rule alone. The refusal keeps it, as `ConfirmWhileBusy` shows.
 
 ## A bug, or a modeling error
 
@@ -180,18 +188,19 @@ To witness a removal path, follow AGENTS.md, "Verify a change": scratch reposito
 4. Never add a line to `model/expected`, or weaken a rule, to make the check pass. A new break is a finding until a replay against the code shows it is a modeling error.
 5. Run the check, follow it with `/statechart` for each new or changed line, and move the sync commit.
 
-## Findings at the sync commit
+## Findings
 
-Each finding has its lines in `model/expected`. The replays are walks through the code at the sync commit; none was run in the app.
+None is open: every rule holds in every setup, and `model/expected` lists no break. A finding keeps its lines in `model/expected` until a fix removes them. A replay is a walk through the code; none was run in the app.
 
-**1. A second confirmed removal can start while the first still runs.** It needs a fault: the window starts afresh, or the dialog fails to draw while it shows Moving.
+**1. A second confirmed removal could start while the first still ran. Fixed (#12).** It needed a fault. You confirmed a removal, and while `residue remove --trash --yes` ran, you quit and opened the app again (the app does not stop residue when it quits), the last-resort `ErrorBoundary` in `main.tsx` drew App anew, or the removal dialog failed to draw and its Close scanned again. The new scan still showed the worktree as can go, and nothing in the app or in `src-tauri` knew a run was in flight, so you could confirm a second run of the same path. Both runs sent only the paths their own lists showed, and residue checked each path again, but residue-cli's model does not cover two remove runs at once.
 
-1. You tick a worktree, click "Move 1 to the trash...", and the plan lists it. You confirm: `confirm` sets Moving and `remove_to_trash` runs `residue remove --trash --json --yes PATH`.
-2. You quit and open the app again, which can leave that residue running: `cli.rs` starts it with std's `Command`, and nothing in the app stops a child when the app quits. Or the last-resort `ErrorBoundary` in `main.tsx` draws App anew. Or the removal dialog's `ErrorBoundary` draws its panel, and its Close scans again.
-3. The new scan runs while the first run still works, so the worktree still shows as can go. Nothing in the app or in `src-tauri` knows a run is in flight.
-4. You tick it again, the plan lists it again, and you confirm a second run of the same path.
+The fix keeps the guard in the app, across launches:
 
-Harm: two runs of `residue remove --trash --yes` work on one worktree at once. Each sends only the paths its own list showed, and residue checks each path again before it moves it. residue-cli's model lists two remove runs at once as not covered, and the service's `residue watch` can already run beside the app's run. A flag in the app cannot cover a relaunch, so this needs a decision on where the guard belongs: in residue, or a lock the app shares across launches.
+- `remove` holds `Removals` (`removal.rs`) from before residue starts until it returns, and refuses a second confirmed removal meanwhile with kind `invalid`, running nothing. The dialog says "This removal did not start, so nothing moved."
+- While residue runs, a marker in the app's data folder names its process by PID, start time to the microsecond, and name. An app that opens again counts a removal whose process still runs as in flight, and removes a marker whose process has ended. A PID goes to another process only after its process exited, and that one starts later, so a reused PID never keeps a removal in flight.
+- The window asks src-tauri when it starts and when the removal dialog closes, and keeps Move to the trash off, with "A removal is still running.", until that removal ends. Then it scans again.
+
+The two lines left `model/expected` with the fix. `NoRunGuard`, `NoMarker` and `ConfirmWhileBusy` show what each part keeps.
 
 ## Restore
 
@@ -203,10 +212,12 @@ Restore is not modeled, because it cannot move or overwrite more than its row. T
 - What the preview, `residue watch --once --dry-run`, finds: it removes nothing, so the model keeps only the folders it ran on.
 - The sidebar and Command-1 to 5 in the removal model, which stays on its own screen. The save model leaves its screen through `go`.
 - A terminal or brew changing the service while a save or a turn-off of the app runs.
-- A quit and a relaunch while a save or turn-off runs. `Changes` lives in the app's process, and nothing stops a `residue service install` the old app started (`cli.rs`, as in Finding 1), so a relaunched app can start a second one beside it.
+- A quit and a relaunch while a save or turn-off runs. `Changes` lives in the app's process, and nothing stops a `residue service install` the old app started (`cli.rs`), so a relaunched app can start a second one beside it. A removal has a marker for this (Finding 1); a save has none.
 - The save dialog's own read failing, which shows residue's error with Try again and Cancel, and no Save.
 - residue's own checks and moves, and `residue watch`.
-- Two windows, and two faults in one behavior.
+- The app quitting between residue's start and the marker's rename, a few system calls apart, or a marker that cannot be written once residue runs, which src-tauri says on stderr: an app that opens again then does not see that removal. A data folder the app cannot write refuses the removal before residue starts, since src-tauri creates the marker's `.part` file first.
+- A residue that an earlier launch started and that hangs: the window waits for it with no deadline, since the deadline belonged to the app that quit. It ends when that residue exits or is stopped.
+- Two windows, two copies of the app at once (each has its own `Removals`, and reads the marker only when it opens), and two faults in one behavior.
 
 ## Credit
 

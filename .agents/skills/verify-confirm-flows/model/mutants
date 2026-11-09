@@ -1,7 +1,8 @@
 # One mutant per line: the guard it removes (Mut("NAME") in the model), the
 # setup check.sh runs it in, and the rule that must break. The rule must
 # hold in that setup without the mutant, so each line shows that the guard
-# keeps it.
+# keeps it. NAME+NAME removes each guard it names: for a guard that another
+# one backs, it shows that the guard keeps the rule once the other is gone.
 #
 # MUTANT                       SETUP             RULE
 # RemoveFlow.tla
@@ -12,8 +13,13 @@ ChosenUnfiltered               remove/no-faults  OpensOnlyForCanGo
 ChecksButtonForEveryVerdict    remove/no-faults  OpensOnlyForCanGo
 NotModal                       remove/no-faults  ListIsForYourChoice
 RunErrorSaysNothingMoved       remove/no-faults  NothingMovedIsTrue
-ConfirmTwice                   remove/no-faults  OneRemovalAtATime
-CloseWhileBusy                 remove/no-faults  OneRemovalAtATime
+ConfirmTwice+ConfirmWhileBusy  remove/no-faults  OneRemovalAtATime
+CloseWhileBusy+ConfirmWhileBusy remove/no-faults  OneRemovalAtATime
+NoRunGuard                     remove/draw       OneRemovalAtATime
+NoRunGuard                     remove/reload     OneRemovalAtATime
+NoMarker                       remove/reload     OneRemovalAtATime
+ConfirmWhileBusy               remove/draw       OneRemovalAtATime
+ConfirmWhileBusy               remove/reload     OneRemovalAtATime
 # SaveFlow.tla
 NoBasisCheck                   save/outside      ReplacesOnlyWhatItShowed
 NoBasisCheck                   save/outside      SaveIsWhatTheDialogShowed

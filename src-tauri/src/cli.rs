@@ -87,6 +87,13 @@ pub struct Run<'a> {
 
 impl Run<'_> {
     pub fn output(&self) -> Result<Output, CliError> {
+        self.output_with(|_| {})
+    }
+
+    /// `output`, calling `started` with the child's PID once it runs, before
+    /// the wait for it begins. The PID stays the child's until this returns:
+    /// the child is waited for only here.
+    pub fn output_with(&self, started: impl FnOnce(u32)) -> Result<Output, CliError> {
         let command = shown(self.bin, &self.args);
         let mut cmd = Command::new(self.bin);
         cmd.args(&self.args)
@@ -102,6 +109,7 @@ impl Run<'_> {
             stderr: None,
             exit_code: None,
         })?;
+        started(child.id());
 
         let stdout = child.stdout.take().map(reader);
         let stderr = child.stderr.take().map(reader);

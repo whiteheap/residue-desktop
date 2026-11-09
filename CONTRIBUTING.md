@@ -92,7 +92,16 @@ On a Mac that runs residue's service, its data and its service are not test fixt
 
 ## State machines
 
-The app keeps no state of its own with a lifecycle. Worktrees, trash entries and removal records have the states residue reports in its `--json` documents, read again before each action; their lifecycles are in [residue-cli's CONTRIBUTING.md](https://github.com/whiteheap/residue-cli/blob/main/CONTRIBUTING.md#state-machines). The automatic cleanup service is launchd's, read with `residue service status`. What the app writes has no states: the folders it scans, in `settings.json` in its config directory (`src-tauri/src/settings.rs`), and the copy of residue a service runs when no residue you installed is new enough (`src-tauri/src/service.rs`, `copy_sidecar`). A save of the service compares before it writes: `install` reads the service again and installs nothing when the read differs from the one its dialog showed (`Basis`, `Save::Changed`), and it runs only while no other save or turn-off of the app runs (`Changes`).
+The app keeps one state of its own with a lifecycle: the confirmed removal in flight, `InFlight` in `src-tauri/src/removal.rs` (#12).
+
+- `None` to `Starting` on a confirm, before residue starts. A confirm in any other state is refused: that is how a second removal is refused.
+- `Starting` to `Running` once residue runs and the system gives its start time, or to `None` when `remove` returns first.
+- `Running` to `None` when `remove` returns, or to `Left` when its residue still runs then (the wait for it failed).
+- `Left` to `None` when that process exits. An app that opens and finds a marker whose process still runs starts in `Left`.
+
+`InFlight::next` decides every move, with no wildcard arm. `Removals::apply` makes each one under one lock and says it on stderr, or says why it is illegal and changes nothing. The marker, `removal-running.json` in the app's data directory, is the one effect outside the app: it is written whole once residue runs (to a `.part` file opened before residue starts, then renamed), removed on every move to `None`, and checked when the app reads it, at launch: one with another schema, or one that does not parse, names no removal and is removed.
+
+Worktrees, trash entries and removal records have the states residue reports in its `--json` documents, read again before each action; their lifecycles are in [residue-cli's CONTRIBUTING.md](https://github.com/whiteheap/residue-cli/blob/main/CONTRIBUTING.md#state-machines). The automatic cleanup service is launchd's, read with `residue service status`. What else the app writes has no states: the folders it scans, in `settings.json` in its config directory (`src-tauri/src/settings.rs`), and the copy of residue a service runs when no residue you installed is new enough (`src-tauri/src/service.rs`, `copy_sidecar`). A save of the service compares before it writes: `install` reads the service again and installs nothing when the read differs from the one its dialog showed (`Basis`, `Save::Changed`), and it runs only while no other save or turn-off of the app runs (`Changes`).
 
 ## Performance
 
