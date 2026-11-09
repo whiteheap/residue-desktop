@@ -2,6 +2,10 @@
 
 Up to 0.0.10, the Mac app shipped in each residue-cli release, with residue's version, and its notes are in [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md).
 
+## Unreleased
+
+- The app bundles residue 0.0.12. It keeps more worktrees that are in use or hold what residue cannot rebuild: a process in a worktree whatever characters its path has, a worktree that holds a very long path, an environment file inside a build folder such as `build/.env`, and the worktree on a bare repository's HEAD branch. Its activity reasons gain `unmatchable_path`, `unnamed_file` and `long_path`, which the app shows in residue's words. The `DEFAULT_*` constants and `FETCH_SINCE` still match residue 0.0.12. [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md#0012-2026-11-09) has the rest.
+
 ## 0.0.11 (2026-11-09)
 
 The app's first release from this repository. It bundles residue 0.0.11.
