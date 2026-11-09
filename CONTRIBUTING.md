@@ -126,6 +126,10 @@ Found something slow, in the app, a library or a tool it runs? Open an issue wit
 6. For a hot path, a dependency, a thread, a child process or a timer, add every run from [Performance](#performance).
 7. CI must pass.
 
+## Releases
+
+A maintainer releases the app by tagging a version, as [AGENTS.md](AGENTS.md#release) describes. Each release publishes `residue-macos.dmg` with `SHA256SUMS` and a build-provenance attestation, and its notes name the residue-cli release inside.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).
