@@ -121,7 +121,7 @@ Each comes from the pull request that last changed it, on release builds with a 
 
 - One repository with 300 linked worktrees, after a scan: the app 34 to 35 MB, WebContent 113 to 117 MB, GPU 17 to 18 MB. A rescan costs WebContent 0.12 to 0.17 s of CPU (residue-cli#90).
 - 20 s of pointer movement over the Worktrees map: WebContent 1.88 to 2.19 s of CPU (residue-cli#90). Along a worktree's bar, with 150 worktrees: WebContent 1.00 s user and 0.22 s system CPU (medians), and, in a debug build with counters, 87 to 96 renders of the bar (residue-cli#113).
-- The JavaScript is 566,523 B and the stylesheet 94,994 B (`pnpm build`, residue-cli#126, residue-cli#130 and this repository's #4, #14, #12 and #13).
+- The JavaScript is 566,676 B and the stylesheet 94,994 B (`pnpm build`, residue-cli#126, residue-cli#130 and this repository's #4, #14, #12, #17 and #13).
 
 Found something slow, in the app, a library or a tool it runs? Open an issue with the measurement and the command that repeats it, before there is a fix.
 
