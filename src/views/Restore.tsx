@@ -238,7 +238,7 @@ export function Restore({
             <ErrorPanel
               title={outcome.lines[0] ?? "Could not restore it"}
               error={outcome.error}
-              hint={namesTo(outcome.error.stderr) ? "To restore it at another path, run the --to command residue printed in a terminal." : undefined}
+              hint={namesTo(outcome.error.stderr) ? "To restore it at another path, run residue restore with --to in a terminal." : undefined}
               stderrOpen={namesTo(outcome.error.stderr)}
             />
           ) : null
