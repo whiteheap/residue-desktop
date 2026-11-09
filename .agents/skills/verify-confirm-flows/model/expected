@@ -11,3 +11,8 @@
 # (src-tauri/src/removal.rs). The window asks src-tauri when it starts and
 # when the removal dialog closes, and keeps Move to the trash off until
 # that run ends (SKILL.md, "Findings").
+#
+# save/during came with the fix for #11 and adds no line: with a terminal
+# or brew changing the service while a save runs, every rule holds, since
+# install passes the dialog's fingerprint to residue as --expect. Without
+# it (the NoExpect mutant), three rules break there (SKILL.md, Finding 2).

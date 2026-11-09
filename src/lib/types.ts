@@ -474,6 +474,11 @@ export interface ServiceBasis {
     roots: string[];
     dry_run: boolean;
   } | null;
+  /**
+   * `residue service status`'s fingerprint of the service, which a save passes
+   * as `--expect`; null when residue printed none, and then a save refuses.
+   */
+  fingerprint: string | null;
 }
 
 export interface ServiceStatus {

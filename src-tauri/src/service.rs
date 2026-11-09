@@ -28,7 +28,10 @@
 //! keeps, and the service it replaces (binary, version, folders, mode). The
 //! save dialog reads the service when it opens and sends that basis back;
 //! `install` reads again and refuses, installing nothing, when any of it
-//! differs (`Save::Changed`).
+//! differs (`Save::Changed`). The basis also holds the fingerprint that
+//! `residue service status` printed, and `install` passes it as `--expect`:
+//! residue compares it with the service right before it writes, so a change
+//! after `install`'s own read is refused too, with nothing written (#11).
 
 use crate::cli::{CliError, ErrorKind, Run, shown};
 use serde::{Deserialize, Serialize};
@@ -217,6 +220,28 @@ pub struct Basis {
     /// The service a save replaces, when launchd runs one and its agent file
     /// can be read.
     pub running: Option<Running>,
+    /// The `fingerprint:` line of `residue service status`, run by the
+    /// binary a save installs with (`installs_as`). It names the agent file,
+    /// the binary it starts, whether launchd loaded it, and that residue's
+    /// release. A save passes it as `--expect`. `None` when residue printed
+    /// none: then a save installs nothing.
+    pub fingerprint: Option<String>,
+}
+
+/// `residue service install --expect`'s exit status when the service is not
+/// the one the fingerprint names: residue wrote nothing (residue-cli's
+/// `service::CHANGED`, from 0.0.12).
+const EXPECT_CHANGED: i32 = 4;
+
+/// A fingerprint as `residue service status` prints it: 32 lowercase hex
+/// digits. `fingerprint: unknown (...)` and anything else are none.
+fn fingerprint_in(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("fingerprint: "))
+        .map(str::trim)
+        .filter(|f| f.len() == 32 && f.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .map(str::to_string)
 }
 
 /// The service a save replaces, as the window showed it.
@@ -229,7 +254,12 @@ pub struct Running {
 }
 
 impl Basis {
-    fn of(installed: bool, program: Option<&Program>, plan: &Plan) -> Self {
+    fn of(
+        installed: bool,
+        program: Option<&Program>,
+        plan: &Plan,
+        fingerprint: Option<String>,
+    ) -> Self {
         Basis {
             installed,
             binary: plan.binary.clone(),
@@ -241,6 +271,7 @@ impl Basis {
                 roots: p.roots.clone(),
                 dry_run: p.dry_run,
             }),
+            fingerprint,
         }
     }
 
@@ -483,12 +514,13 @@ pub fn status(ctx: &Context, dev: &DevPreview) -> Result<Status, CliError> {
 
 /// The service's status, and the binary a save would install with.
 fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError> {
+    let installer = find_installer(ctx)?;
     if dev.enabled {
         let current = dev.get(ctx)?;
         let installed = current.is_some();
         let program = current.as_ref().map(|(p, _)| p);
-        let (plan, installer) = plan(ctx, installed, program)?;
-        let basis = Basis::of(installed, program, &plan);
+        let plan = plan(ctx, &installer, installed, program);
+        let basis = Basis::of(installed, program, &plan, None);
         let status = match current {
             Some((program, log_lines)) => Status {
                 installed: true,
@@ -524,12 +556,16 @@ fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError
         return Ok((status, installer));
     }
 
-    // `residue service status` only reads: launchctl print and the log.
+    // `residue service status` only reads: launchctl print and the log. The
+    // residue a save installs with runs it, since its fingerprint names that
+    // release, and before the agent file is read, so a change after it
+    // makes the save's `--expect` refuse rather than go unseen.
+    let (bin, path_env) = installs_as(ctx, &installer);
     let out = Run {
-        bin: ctx.sidecar,
+        bin,
         args: vec!["service".into(), "status".into()],
         cwd: ctx.home,
-        path_env: ctx.path_env,
+        path_env,
         deadline: Duration::from_secs(20),
     }
     .output()?;
@@ -559,8 +595,13 @@ fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError
     } else {
         None
     };
-    let (plan, installer) = plan(ctx, installed, program.as_ref())?;
-    let basis = Basis::of(installed, program.as_ref(), &plan);
+    let plan = plan(ctx, &installer, installed, program.as_ref());
+    let basis = Basis::of(
+        installed,
+        program.as_ref(),
+        &plan,
+        fingerprint_in(&out.stdout),
+    );
     let (log_lines, log_error) = match tail(&log_path, 40) {
         Ok(lines) => (lines, None),
         Err(e) => (Vec::new(), Some(e)),
@@ -958,12 +999,7 @@ fn find_installer(ctx: &Context) -> Result<Installer, CliError> {
 /// will not save, when it will not. Only a service launchd runs has options
 /// to keep: an agent file it has not loaded is left over, and turning the
 /// service on starts from residue's defaults.
-fn plan(
-    ctx: &Context,
-    installed: bool,
-    program: Option<&Program>,
-) -> Result<(Plan, Installer), CliError> {
-    let installer = find_installer(ctx)?;
+fn plan(ctx: &Context, installer: &Installer, installed: bool, program: Option<&Program>) -> Plan {
     let mut blocked = None;
     let keep = match (installed, program) {
         (false, _) => Vec::new(),
@@ -1001,15 +1037,25 @@ fn plan(
         ));
     }
     let settings = watch_settings(&keep, installer.version.as_deref());
-    let plan = Plan {
+    Plan {
         binary: installer.bin.to_string_lossy().into_owned(),
         version: installer.version.clone(),
         managed: installer.managed,
         keep,
         settings,
         blocked,
-    };
-    Ok((plan, installer))
+    }
+}
+
+/// The binary that runs as the residue a save installs with, and its PATH.
+/// A save writes the app's own copy from the bundled binary, so for that
+/// copy it is the bundled binary: the copy may still be an older release.
+fn installs_as<'a>(ctx: &'a Context, installer: &'a Installer) -> (&'a Path, &'a OsStr) {
+    if installer.managed {
+        (ctx.sidecar, ctx.path_env)
+    } else {
+        (installer.bin.as_path(), installer.path_env.as_os_str())
+    }
 }
 
 /// Copy the bundled binary to `dest`: written next to it, then renamed over
@@ -1092,8 +1138,10 @@ impl Drop for Changing<'_> {
 
 /// Install (or replace) the service for `roots`, passing on the options of
 /// the running service as they are written. `seen` is the basis the window
-/// showed: when a fresh read differs, nothing is installed, and the result
-/// says what changed. Refused while another install or uninstall runs.
+/// showed: when a fresh read differs, or residue finds the service changed
+/// from `seen.fingerprint` as it writes, nothing is installed, and the
+/// result says what changed. Refused while another install or uninstall
+/// runs.
 pub fn install(
     ctx: &Context,
     dev: &DevPreview,
@@ -1150,6 +1198,16 @@ pub fn install(
         });
     }
 
+    // residue compares the service with the fingerprint this dialog read and
+    // writes it in one step, so a change after the read above is refused too
+    // (#11). A save without one would replace whatever is there.
+    let Some(fingerprint) = seen.fingerprint.as_deref() else {
+        return Err(CliError::invalid(
+            "residue printed no fingerprint of the service, so a save cannot check what it replaces. See why: residue service status",
+        ));
+    };
+    args.insert(2, "--expect".into());
+    args.insert(3, fingerprint.into());
     // Only a real save writes the app's own copy: the preview installs
     // nothing, so it needs none.
     if installer.managed {
@@ -1163,6 +1221,15 @@ pub fn install(
         deadline: Duration::from_secs(60),
     }
     .output()?;
+    if out.code == Some(EXPECT_CHANGED) {
+        // Nothing was written: show the service as it is now, to save again.
+        let status = status(ctx, dev)?;
+        let mut changes = status.basis.changes_since(seen);
+        if changes.is_empty() {
+            changes.push("The service changed outside the app during the save.".into());
+        }
+        return Ok(Save::Changed { changes, status });
+    }
     if out.code != Some(0) {
         return Err(out.error(
             ErrorKind::Failed,
@@ -1235,13 +1302,7 @@ fn run_preview(
     if roots.is_empty() {
         return Err(CliError::invalid("choose at least one folder to watch"));
     }
-    // A save writes the app's own copy from the bundled binary, so the
-    // bundled binary is the one the service would run.
-    let (bin, path_env) = if installer.managed {
-        (ctx.sidecar, ctx.path_env)
-    } else {
-        (installer.bin.as_path(), installer.path_env.as_os_str())
-    };
+    let (bin, path_env) = installs_as(ctx, installer);
     let mut args: Vec<OsString> = vec!["watch".into(), "--once".into()];
     args.extend(watch_args(roots, options, true));
     let out = Run {

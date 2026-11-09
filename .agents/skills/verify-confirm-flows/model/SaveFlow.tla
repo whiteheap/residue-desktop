@@ -6,10 +6,11 @@
 (* the save form's folders and its Preview, leaving the screen (`go` in    *)
 (* src/App.tsx, with `changingService` in src/lib/api.ts), and `install`   *)
 (* and `uninstall` in src-tauri/src/service.rs, which run                  *)
-(* `residue service install [OPTIONS] [--dry-run] FOLDERS...` and          *)
-(* `residue service uninstall`. A terminal or `brew upgrade` can change    *)
-(* the service while a dialog is open. The coverage table in ../SKILL.md   *)
-(* maps each action to the code.                                           *)
+(* `residue service install --expect FINGERPRINT [OPTIONS] [--dry-run]     *)
+(* FOLDERS...` and `residue service uninstall`. A terminal or              *)
+(* `brew upgrade` can change the service while a dialog is open, and with  *)
+(* DuringSave while a save runs. The coverage table in ../SKILL.md maps    *)
+(* each action to the code.                                                *)
 (***************************************************************************)
 EXTENDS FiniteSets, Naturals
 
@@ -21,6 +22,7 @@ CONSTANTS
   MaxOutside,  \* how many changes a terminal or brew makes
   World,       \* which of them can happen: "on", "off", "folders", "mode",
                \* "options", "argument", "brew"
+  DuringSave,  \* TRUE: they can happen while a call of the app runs too (#11)
   Faults       \* what may go wrong once in a behavior: "reload"
 
 Mut(name) == name \in Broken
@@ -48,7 +50,10 @@ Off == [on |-> FALSE, roots |-> {}, dry |-> FALSE, opts |-> "defaults", odd |-> 
 
 \* A read's `Basis`: the service a save replaces, the options it keeps, and
 \* the residue it installs with. Only a service that is on has options to keep.
-Basis(s, v) == [on |-> s.on, roots |-> s.roots, dry |-> s.dry, opts |-> s.opts, ver |-> v]
+\* Its fingerprint (`Basis.fingerprint`, from `residue service status`) names
+\* the agent file's bytes, so an argument the app cannot read is in it too.
+Basis(s, v) == [on |-> s.on, roots |-> s.roots, dry |-> s.dry, opts |-> s.opts, odd |-> s.odd,
+                ver |-> v]
 Read == Basis(svc, ver)
 Keep(b) == IF b.on THEN b.opts ELSE "defaults"
 \* `Plan.blocked`: a save would drop an argument the app cannot read.
@@ -56,7 +61,7 @@ Blocked == svc.on /\ svc.odd
 \* `startFrom`: the running service's folders, else the app's.
 StartRoots(b) == IF b.on /\ b.roots # {} THEN b.roots ELSE AppRoots
 
-NoRead == [on |-> FALSE, roots |-> {}, dry |-> FALSE, opts |-> "none", ver |-> "none"]
+NoRead == [on |-> FALSE, roots |-> {}, dry |-> FALSE, opts |-> "none", odd |-> FALSE, ver |-> "none"]
 \* The save form's preview: none shown, running for the folders ticked at
 \* the click, or shown for the folders it ran on.
 NoPreview == [phase |-> "none", roots |-> {}]
@@ -72,7 +77,7 @@ NoLast == [set |-> FALSE, before |-> Off, after |-> Off, ver |-> "none", shown |
            roots |-> {}, dry |-> FALSE]
 
 Bases == [on : BOOLEAN, roots : SUBSET Folders, dry : BOOLEAN,
-          opts : Opts \cup {"none"}, ver : {"old", "new", "none"}]
+          opts : Opts \cup {"none"}, odd : BOOLEAN, ver : {"old", "new", "none"}]
 
 \* A call inside `install` past its read, or inside `uninstall`: it holds
 \* `Changes` in service.rs.
@@ -232,7 +237,7 @@ YouLeave ==
 
 -----------------------------------------------------------------------------
 (* service.rs `install`: take `Changes`, read again, compare, check, then  *)
-(* install. `uninstall`: take `Changes`, then uninstall.                   *)
+(* install with `--expect`. `uninstall`: take `Changes`, then uninstall.   *)
 
 \* `Changes::start`, then the fresh read against the basis the window sent.
 \* Another call runs: refused, nothing run. Equal: go on, unless the plan is
@@ -258,18 +263,28 @@ InstallChecks(i) ==
                     ELSE [c EXCEPT !.phase = "checked", !.keep = Keep(fresh), !.ver = ver]]
   /\ UNCHANGED <<svc, ver, scr, dlg, last, n>>
 
-\* `residue service install` writes the service: the folders and mode of the
-\* click, the options the fresh read keeps, run by the residue it found. The
-\* reply can still fail: the read after the install, or a deadline.
+\* `residue service install --expect` with the fingerprint of the basis the
+\* window sent. Under its lock, which every `residue service install` and
+\* `uninstall` takes, residue compares the service and its own release with
+\* that fingerprint right before it writes, so the two are one step. They
+\* differ: exit 4, nothing written, and `install` reads the service again
+\* for `Save::Changed`. Equal: residue writes the service, the folders and
+\* mode of the click, the options the fresh read keeps, run by the residue
+\* it found. The reply can still fail: the read after the install, or a
+\* deadline. With "NoExpect" it writes whatever runs.
 InstallLands(i) ==
   /\ calls[i].kind = "install" /\ calls[i].phase = "checked"
   /\ LET c == calls[i] IN
-       /\ svc' = [on |-> TRUE, roots |-> c.roots, dry |-> c.dry, opts |-> c.keep, odd |-> FALSE]
-       /\ last' = [set |-> TRUE, before |-> svc, after |-> svc', ver |-> ver, shown |-> c.shown,
-                   roots |-> c.roots, dry |-> c.dry]
-       /\ \E ok \in BOOLEAN :
-            calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = IF ok THEN "landed" ELSE "failed",
-                                                    !.wrote = TRUE]]
+     IF Read # c.seen /\ ~Mut("NoExpect")
+       THEN /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "changed", !.fresh = Read,
+                                                       !.freshBlocked = Blocked]]
+            /\ UNCHANGED <<svc, last>>
+       ELSE /\ svc' = [on |-> TRUE, roots |-> c.roots, dry |-> c.dry, opts |-> c.keep, odd |-> FALSE]
+            /\ last' = [set |-> TRUE, before |-> svc, after |-> svc', ver |-> ver, shown |-> c.shown,
+                        roots |-> c.roots, dry |-> c.dry]
+            /\ \E ok \in BOOLEAN :
+                 calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = IF ok THEN "landed" ELSE "failed",
+                                                         !.wrote = TRUE]]
   /\ UNCHANGED <<ver, scr, dlg, n>>
 
 \* The read fails, or `residue service install` fails before it writes.
@@ -344,11 +359,11 @@ Reload ==
 
 -----------------------------------------------------------------------------
 (* Outside the app: a terminal or `brew upgrade`, while no save of the app  *)
-(* runs.                                                                    *)
+(* runs, or with DuringSave at any time.                                    *)
 
 Outside(kind, new, v) ==
   /\ kind \in World
-  /\ Idle
+  /\ Idle \/ DuringSave
   /\ n.outside < MaxOutside
   /\ svc' = new /\ ver' = v
   /\ n' = [n EXCEPT !.outside = @ + 1]
