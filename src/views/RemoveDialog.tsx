@@ -22,7 +22,7 @@ type Phase =
  * --trash --json PATH...` without --yes, which removes nothing): each worktree
  * checked again, the expired trash entries the run would purge, and the
  * removal records it would forget. The user confirms exactly that list; then
- * the same command with --yes.
+ * the same command with --yes and --as-of the plan's generated_at.
  */
 export function RemoveDialog({
   paths,
@@ -53,10 +53,12 @@ export function RemoveDialog({
 
   const busy = phase.step === "planning" || phase.step === "running";
 
+  // The run judges ages at the shown plan's time (#13), so it purges and
+  // forgets only what this plan could list.
   const confirm = (plan: RemoveDocument, ready: string[]) => {
     setPhase({ step: "running", plan });
     api
-      .removeToTrash(ready)
+      .removeToTrash(ready, plan.generated_at)
       .then((r) => {
         setPhase({ step: "done", result: r.document });
         onRemoved(r.document);

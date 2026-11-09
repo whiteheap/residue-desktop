@@ -108,9 +108,9 @@ Run the check for a change to any function in this table, or for one that adds a
 | `YouOpenChecks`, `ChecksLand`, `YouLeaveChecks`, `YouClickMoveInChecks` | `Detail.tsx`: the checks (`residue explain`) and "Move this worktree to the trash...", shown only for verdict `candidate` and `disabled` unless `inFlight` is "none" |
 | `YouRescan`, `ScanLands` | `App.tsx` `rescan`, Command-R; `useCli` |
 | `Open` | `App.tsx` `setRemoving`, which mounts `RemoveDialog` |
-| `PlanLands`, `PlanFails` | `RemoveDialog.tsx` the effect on `paths` with `live`; `lib.rs` `plan_removal`, `remove(..., confirmed = false)`; `ready`, the results `skipped` with verdict `candidate` |
-| `YouConfirm`, `InFlight` | `RemoveDialog.tsx` `confirm`; the confirm button, `disabled={running}`, sends `ready`; `lib.rs` `remove`, which calls `s.removals.start()` before residue starts; `removal.rs` `Removals::start`, refused with kind `invalid` while a removal is in flight, and `InFlight::next`; the dialog's text for kind `invalid` |
-| `RunMoves`, `RunLands`, `RunFails` | `lib.rs` `remove_to_trash`, `remove(..., confirmed = true)`, the one call that adds `--yes`; `cli.rs` `Run::output_with` and its deadline; `removal.rs` `Removing::record`, which writes the marker, and `Removing`'s drop on return; `confirm`'s `.then` and `.catch`; `App.tsx` `onRemoved` |
+| `PlanLands`, `PlanFails` | `RemoveDialog.tsx` the effect on `paths` with `live`; `lib.rs` `plan_removal`, `remove(..., confirmed = None)`; `ready`, the results `skipped` with verdict `candidate` |
+| `YouConfirm`, `InFlight` | `RemoveDialog.tsx` `confirm`, which sends `ready` and the plan's `generated_at`; the confirm button, `disabled={running}`; `lib.rs` `remove`, which calls `s.removals.start()` before residue starts; `removal.rs` `Removals::start`, refused with kind `invalid` while a removal is in flight, and `InFlight::next`; the dialog's text for kind `invalid` |
+| `RunMoves`, `RunLands`, `RunFails` | `lib.rs` `remove_to_trash`, `remove(..., confirmed = Some(AsOf))`, the one call that adds `--yes`, with `--as-of` the plan's `generated_at` (`AsOf::of_plan`, which refuses with kind `invalid` and runs nothing when the confirm sends no such time); `cli.rs` `Run::output_with` and its deadline; `removal.rs` `Removing::record`, which writes the marker, and `Removing`'s drop on return; `confirm`'s `.then` and `.catch`; `App.tsx` `onRemoved` |
 | `YouClose` | `RemoveDialog.tsx` `onOpenChange` and `busy`; `App.tsx` the dialog's `onClose`, which calls `watchRemoval` |
 | `HeardLands`, `RemovalEnds`, `HeardFails` | `App.tsx` `watchRemoval`, `asks`, `heard`, and the effect that calls `api.removalRunning()`, then `api.waitForRemoval()`, `rescan` and `reloadStats`, with its `.catch`; `lib.rs` `removal_running`, `wait_for_removal`; `removal.rs` `Removals::running`, `wait`, `refresh` and `Process::runs` |
 | `DrawFails`, `YouCloseBrokenDialog` | `App.tsx` the removal dialog's `ErrorBoundary` and its `onClose`, which scans again and calls `watchRemoval` |
@@ -131,7 +131,7 @@ Run the check for a change to any function in this table, or for one that adds a
 | `ReplyArrives` | `SaveForm` `install`'s result: `onChanged`; for `changed`, the fresh read through `onAdopt` and `adopted`; `onFailed` |
 | `Change`, `Terminal...`, `BrewUpgrade` | No code: a commit or a branch outside the app; `residue service install` or `uninstall` in a terminal; `brew upgrade` |
 
-Sync commit: `dfe663c64b293afa71a0b6d70f7474e98a39e6a9`, the fix for #9 and #10, which was confirmed against the models. The models were last confirmed to describe the code above at that commit, on 2026-11-09. Move it forward only after you confirm, for each covered function a change touched, that the model still describes it. `git diff dfe663c64b -- src/main.tsx src/App.tsx src/lib/api.ts src/views/RemoveDialog.tsx src/views/Worktrees.tsx src/views/Detail.tsx src/views/Automatic.tsx src-tauri/src/lib.rs src-tauri/src/service.rs src-tauri/src/cli.rs src-tauri/src/removal.rs` lists what to read. The change that fixed #12 is in that diff and was confirmed with it: `Removals` in `removal.rs` and `lib.rs`, `removal_running` and `wait_for_removal`, `Run::output_with` in `cli.rs`, `watchRemoval` in `App.tsx`, the move buttons' `inFlight` in `Worktrees.tsx` and `Detail.tsx`, and the dialog's text for kind `invalid`.
+Sync commit: `dfe663c64b293afa71a0b6d70f7474e98a39e6a9`, the fix for #9 and #10, which was confirmed against the models. The models were last confirmed to describe the code above at that commit, on 2026-11-09. Move it forward only after you confirm, for each covered function a change touched, that the model still describes it. `git diff dfe663c64b -- src/main.tsx src/App.tsx src/lib/api.ts src/views/RemoveDialog.tsx src/views/Worktrees.tsx src/views/Detail.tsx src/views/Automatic.tsx src-tauri/src/lib.rs src-tauri/src/service.rs src-tauri/src/cli.rs src-tauri/src/removal.rs` lists what to read. The change that fixed #12 is in that diff and was confirmed with it: `Removals` in `removal.rs` and `lib.rs`, `removal_running` and `wait_for_removal`, `Run::output_with` in `cli.rs`, `watchRemoval` in `App.tsx`, the move buttons' `inFlight` in `Worktrees.tsx` and `Detail.tsx`, and the dialog's text for kind `invalid`. The change that fixed #13 is in that diff too and was confirmed with it: `AsOf` and `remove_to_trash`'s `as_of` in `lib.rs`, `removeToTrash` in `api.ts`, and `confirm` in `RemoveDialog.tsx`, which sends the plan's `generated_at`. The paths a confirm sends are as before, and the model has no clock (Not covered).
 
 ## Read a result
 
@@ -150,7 +150,7 @@ Each mutant in `model/mutants` removes one guard the code has, or two joined by 
 
 | Mutant | The guard it removes | Rule that breaks |
 | --- | --- | --- |
-| `PlanWithYes` | the plan runs without `--yes` (`remove`, `confirmed = false`) | `OnlyListedWorktreesMove` |
+| `PlanWithYes` | the plan runs without `--yes` (`remove`, `confirmed = None`) | `OnlyListedWorktreesMove` |
 | `ConfirmSendsChoice` | the confirm sends the plan's `ready` paths, not the paths you chose | `ConfirmSendsTheList`, `OnlyListedWorktreesMove` |
 | `ChosenUnfiltered` | `chosen` keeps only ticks the shown scan calls candidates | `OpensOnlyForCanGo` |
 | `ChecksButtonForEveryVerdict` | the checks show the move button only for a candidate | `OpensOnlyForCanGo` |
@@ -209,6 +209,7 @@ Restore is not modeled, because it cannot move or overwrite more than its row. T
 ## Not covered
 
 - The trash entries a remove run purges, and the removal records it forgets: the model's runs only move the paths they are sent.
+- The clock, and so the time between the plan and the confirmed run: the confirmed run passes the shown plan's `generated_at` as `--as-of`, so residue judges every age at the plan's time (#13).
 - What the preview, `residue watch --once --dry-run`, finds: it removes nothing, so the model keeps only the folders it ran on.
 - The sidebar and Command-1 to 5 in the removal model, which stays on its own screen. The save model leaves its screen through `go`.
 - A terminal or brew changing the service while a save or a turn-off of the app runs.
