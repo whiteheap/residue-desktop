@@ -2,7 +2,9 @@
 
 Up to 0.0.10, the Mac app shipped in each residue-cli release, with residue's version, and its notes are in [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md).
 
-## Unreleased
+## 0.0.12 (2026-11-09)
+
+It bundles residue 0.0.12, which keeps more worktrees that are in use or hold what it cannot rebuild, and a save replaces only the service its dialog showed.
 
 - A save replaces only the service its dialog showed, also when a terminal or `brew upgrade` changes the service while the save runs. Before, `install` compared the service with the dialog's read and then ran `residue service install`, and a change in between went unseen: the save replaced a service the dialog never showed, and could drop an option a terminal had just added. The save now passes the fingerprint `residue service status` printed for the dialog's read as `residue service install --expect`, and residue writes the service only while it still has that fingerprint, comparing under a lock right before it writes. Otherwise nothing is saved, and the dialog shows the service as it is now, to check and save again (#11). It needs residue 0.0.12, which adds `--expect`.
 - The app bundles residue 0.0.12. It keeps more worktrees that are in use or hold what residue cannot rebuild: a process in a worktree whatever characters its path has, a worktree that holds a very long path, an environment file inside a build folder such as `build/.env`, and the worktree on a bare repository's HEAD branch. Its activity reasons gain `unmatchable_path`, `unnamed_file` and `long_path`, which the app shows in residue's words. The `DEFAULT_*` constants and `FETCH_SINCE` still match residue 0.0.12. [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md#0012-2026-11-09) has the rest.
