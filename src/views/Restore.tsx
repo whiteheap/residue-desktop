@@ -95,6 +95,16 @@ function recordKeep(
   return { age, keep: item.keep, until: until.toLocaleDateString(undefined, { dateStyle: "medium" }) };
 }
 
+/**
+ * Whether residue's stderr names its `--to` option, as in "residue restore
+ * RECORD --to NEWPATH": a trash restore whose worktree Git can no longer use
+ * where it was, or a path that is taken. The app has no `--to`, so the
+ * error says to run it in a terminal.
+ */
+function namesTo(stderr: string | null): boolean {
+  return !!stderr && /(?:^|\s)--to(?:[\s=]|$)/m.test(stderr);
+}
+
 /** How a restored worktree came back, in words. */
 function restoredText(doc: RestoreDocument, item: Restorable, home: string | undefined): string[] {
   const done = doc.restore;
@@ -165,12 +175,15 @@ export function Restore({
     try {
       const doc = await api.restore(item.entryPath, item.root);
       setOutcome({ ok: true, lines: restoredText(doc, item, home) });
-      onRestored();
-      load();
     } catch (e) {
       setOutcome({ ok: false, lines: [`Could not restore ${item.name}`], error: asCliError(e) });
     } finally {
       setWorking(null);
+      // Read again after a failure too: a restore that fails can still
+      // have moved files, such as a trash entry moved back to a path where
+      // Git can no longer use it.
+      onRestored();
+      load();
     }
   };
 
@@ -222,7 +235,12 @@ export function Restore({
               ))}
             </output>
           ) : outcome.error ? (
-            <ErrorPanel title={outcome.lines[0] ?? "Could not restore it"} error={outcome.error} />
+            <ErrorPanel
+              title={outcome.lines[0] ?? "Could not restore it"}
+              error={outcome.error}
+              hint={namesTo(outcome.error.stderr) ? "To restore it at another path, run the --to command residue printed in a terminal." : undefined}
+              stderrOpen={namesTo(outcome.error.stderr)}
+            />
           ) : null
         ) : null}
         {error ? <ErrorPanel title="residue could not list what it can restore" error={error} /> : null}

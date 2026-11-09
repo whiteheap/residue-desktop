@@ -107,15 +107,23 @@ export function PermissionHint() {
   );
 }
 
-/** A failed residue run, shown as it happened: message, command, stderr. */
+/**
+ * A failed residue run, shown as it happened: message, command, stderr.
+ * `hint` is one line on what to do next; `stderrOpen` shows what residue
+ * printed without a click, for when the next step is in it.
+ */
 export function ErrorPanel({
   title,
   error,
   action,
+  hint,
+  stderrOpen = false,
 }: {
   title: string;
   error: CliError;
   action?: ReactNode;
+  hint?: string | undefined;
+  stderrOpen?: boolean;
 }) {
   const permission = isPermissionError(error.stderr) || isPermissionError(error.message);
   return (
@@ -132,6 +140,7 @@ export function ErrorPanel({
         </p>
       ) : null}
       {permission ? <PermissionHint /> : null}
+      {hint ? <p className="hint">{hint}</p> : null}
       {error.command ? (
         <dl className="error-facts">
           <dt>Command</dt>
@@ -147,7 +156,7 @@ export function ErrorPanel({
         </dl>
       ) : null}
       {error.stderr ? (
-        <details>
+        <details open={stderrOpen}>
           <summary>What residue printed</summary>
           <pre className="log">{error.stderr}</pre>
         </details>
