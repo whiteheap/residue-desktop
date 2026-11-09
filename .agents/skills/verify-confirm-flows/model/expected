@@ -1,0 +1,15 @@
+# What check.sh must find at the sync commit in SKILL.md: each rule that
+# breaks in a setup, with TLC's shortest path to it (the actions, after
+# the initial state). Every rule not listed holds. A line goes only when
+# the code it describes changed, with the reason in the same change.
+
+# Finding 1. A second confirmed run can start while the first still runs.
+# The window starts afresh while `residue remove --trash --yes` runs (a
+# quit and a relaunch, which can leave residue running, or the last-resort
+# "Try again", which draws App anew), or the dialog fails to draw while it
+# shows Moving and its Close returns to the list. Either way the worktree
+# still shows as can go, and nothing in the app or in src-tauri knows that
+# a run is in flight. Each run still sends only the worktrees its own list
+# showed, and residue checks each one again (SKILL.md, "Findings").
+remove/reload OneRemovalAtATime: YouTick YouClickMove PlanLands YouConfirm Reload ScanLands YouTick YouClickMove PlanLands YouConfirm
+remove/draw OneRemovalAtATime: YouTick YouClickMove PlanLands YouConfirm DrawFails YouCloseBrokenDialog YouClickMove PlanLands YouConfirm

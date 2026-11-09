@@ -1,0 +1,52 @@
+---
+title: "Moving a worktree to the trash"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: list
+    lg1: dialog
+    lg2: moved
+  }
+  class lg0 teal
+  class lg1 blue
+  class lg2 orange
+  state "Worktrees" as s0 {
+    s1: Can go
+    s2: Kept
+    s3: Moved, still listed
+    s4: In the trash, gone from the list
+  }
+  state "Removal dialog" as s5 {
+    s6: Checking again, nothing moves yet
+    s7: No plan: nothing moved
+    s8: Lists what will move
+    s9: Moving
+    s10: Stopped: scan again to see what moved
+    s11: Done: shows what moved
+  }
+  [*] --> s1
+  [*] --> s2
+  s1 --> s6: you click Move to the trash
+  s6 --> s7: the plan fails
+  s6 --> s8: residue lists what it would move
+  s7 --> s1: you close it
+  s8 --> s9: you confirm
+  s8 --> s1: you close it
+  s9 --> s10: the run fails
+  s9 --> s11: residue reports what moved
+  s10 --> s1: you close it
+  s10 --> s3: you close it
+  s11 --> s3: you close it
+  s3 --> s4: the scan lands
+  s11 --> s4: you close it
+  s10 --> s4: you close it
+  class s1 teal
+  class s2 teal
+  class s3 orange
+  class s4 orange
+  class s6 blue
+  class s7 blue
+  class s8 blue
+  class s9 blue
+  class s10 blue
+  class s11 blue

@@ -43,6 +43,8 @@ On a machine that runs residue's service, its user's data and service are not te
 
 Then run what CI runs ([CONTRIBUTING.md](CONTRIBUTING.md#checks)). A change to the CLI the app bundles is a change to `sidecar.lock`, checked as the invariants above say.
 
+A change to how the app moves worktrees to the trash (`src/views/RemoveDialog.tsx` and its wiring in `src/App.tsx`, `chosen` in `src/views/Worktrees.tsx`, the move button in `src/views/Detail.tsx`, `remove` in `src-tauri/src/lib.rs`) or saves or turns off automatic cleanup (its dialogs in `src/views/Automatic.tsx`, `Basis`, `read`, `plan`, `install` and `uninstall` in `src-tauri/src/service.rs`) also runs `bash .agents/skills/verify-confirm-flows/check.sh`, about 35 seconds. It model-checks every order of your clicks, residue's replies and changes outside the app in those flows, and fails when a rule breaks that did not before. It reads the models, not the code: update the model in the same change, as [its skill](.agents/skills/verify-confirm-flows/SKILL.md) says. `.github/workflows/model.yml` runs it when a model changes; it is not a required check.
+
 ## Release
 
 The app's version is `version` in `src-tauri/tauri.conf.json`, not residue-cli's. To release X.Y.Z:

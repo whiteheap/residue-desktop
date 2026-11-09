@@ -1,0 +1,32 @@
+name: model
+
+# The confirm-flow models: TLC checks .agents/skills/verify-confirm-flows/model
+# against model/expected, with the tools check.sh pins. It reads the models,
+# not the app's code, so it runs when a model or its check changes; a change
+# to the code a model covers updates the model in the same pull request
+# (AGENTS.md, "Verify a change"). It is not a required check.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".agents/skills/verify-confirm-flows/**"
+      - ".github/workflows/model.yml"
+  pull_request:
+    paths:
+      - ".agents/skills/verify-confirm-flows/**"
+      - ".github/workflows/model.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  confirm-flows:
+    name: confirm-flows-model
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Model check
+        run: bash .agents/skills/verify-confirm-flows/check.sh
