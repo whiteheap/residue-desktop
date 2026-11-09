@@ -101,7 +101,7 @@ printf '127.0.0.1 localhost %s\n' "$(hostname)" > "$work/hosts"
 # The setups. Each names its model and its constants; model/mutants names
 # them too. Bounds: two worktrees, two dialog openings, two changes outside
 # the app, and at most one fault in a behavior.
-setups="remove/no-faults remove/reload remove/draw save/outside save/reload"
+setups="remove/no-faults remove/reload remove/draw save/outside save/during save/reload"
 
 module_of() {
   case $1 in
@@ -131,7 +131,14 @@ constants_of() {
       printf '  %s\n' 'W = {"a", "b"}' "Faults = $faults" 'MaxOpens = 2' 'MaxChanges = 2' ;;
     save/outside)
       printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
-        'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' 'Faults = {}' ;;
+        'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' \
+        'DuringSave = FALSE' 'Faults = {}' ;;
+    save/during)
+      # save/outside with the changes outside the app possible at any time,
+      # also between install's read and residue's write (#11).
+      printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
+        'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' \
+        'DuringSave = TRUE' 'Faults = {}' ;;
     save/reload)
       # The window starts afresh while a save or turn-off runs: two calls of
       # the app, one of them from a dialog that is gone. Which folders they
@@ -141,7 +148,7 @@ constants_of() {
       # service only while no call of the app runs, so they add nothing here
       # but states.
       printf '  %s\n' 'Folders = {"A"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 0' \
-        'World = {}' 'Faults = {"reload"}' ;;
+        'World = {}' 'DuringSave = FALSE' 'Faults = {"reload"}' ;;
     *) echo "check.sh: no setup $1" >&2; exit 2 ;;
   esac
 }

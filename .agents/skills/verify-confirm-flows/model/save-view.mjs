@@ -5,10 +5,10 @@
 export const title = "Turning automatic cleanup on, saving folders, turning it off";
 
 const same = (a, b) =>
-  a.on === b.on && a.dry === b.dry && a.opts === b.opts && a.ver === b.ver &&
+  a.on === b.on && a.dry === b.dry && a.opts === b.opts && a.odd === b.odd && a.ver === b.ver &&
   a.roots.length === b.roots.length && a.roots.every((r) => b.roots.includes(r));
 
-const read = (v) => ({ on: v.svc.on, roots: v.svc.roots, dry: v.svc.dry, opts: v.svc.opts, ver: v.ver });
+const read = (v) => ({ on: v.svc.on, roots: v.svc.roots, dry: v.svc.dry, opts: v.svc.opts, odd: v.svc.odd, ver: v.ver });
 
 const saveDialog = (v) => {
   const d = v.dlg;
