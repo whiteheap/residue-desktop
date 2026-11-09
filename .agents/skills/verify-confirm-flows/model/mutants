@@ -1,0 +1,25 @@
+# One mutant per line: the guard it removes (Mut("NAME") in the model), the
+# setup check.sh runs it in, and the rule that must break. The rule must
+# hold in that setup without the mutant, so each line shows that the guard
+# keeps it.
+#
+# MUTANT                       SETUP             RULE
+# RemoveFlow.tla
+PlanWithYes                    remove/no-faults  OnlyListedWorktreesMove
+ConfirmSendsChoice             remove/no-faults  ConfirmSendsTheList
+ConfirmSendsChoice             remove/no-faults  OnlyListedWorktreesMove
+ChosenUnfiltered               remove/no-faults  OpensOnlyForCanGo
+ChecksButtonForEveryVerdict    remove/no-faults  OpensOnlyForCanGo
+NotModal                       remove/no-faults  ListIsForYourChoice
+RunErrorSaysNothingMoved       remove/no-faults  NothingMovedIsTrue
+ConfirmTwice                   remove/no-faults  OneRemovalAtATime
+CloseWhileBusy                 remove/no-faults  OneRemovalAtATime
+# SaveFlow.tla
+NoBasisCheck                   save/outside      ReplacesOnlyWhatItShowed
+NoBasisCheck                   save/outside      SaveIsWhatTheDialogShowed
+BasisWithoutMode               save/outside      ReplacesOnlyWhatItShowed
+BasisWithoutVersion            save/outside      SaveIsWhatTheDialogShowed
+RetryOnChange                  save/outside      ReplacesOnlyWhatItShowed
+SendsTheScreenBasis            save/outside      ReplacesOnlyWhatItShowed
+NoBlockedCheck                 save/outside      NeverDropsAnArgument
+SwitchInstalls                 save/outside      WarnedBeforeItDeletes

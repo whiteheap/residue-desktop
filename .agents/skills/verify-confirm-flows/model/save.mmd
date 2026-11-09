@@ -1,0 +1,58 @@
+---
+title: "Turning automatic cleanup on, saving folders, turning it off"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: screen
+    lg1: dialog
+  }
+  class lg0 teal
+  class lg1 blue
+  state "Automatic cleanup" as s0 {
+    s1: The service is off
+    s2: The service is on
+  }
+  state "Save dialog" as s3 {
+    s4: Reading the service
+    s5: Shows the service as it is
+    s6: Saving: nothing written yet
+    s7: Shows a service that has changed
+    s8: Saving: written
+  }
+  state "Turn-off dialog" as s9 {
+    s10: Asks to turn it off
+    s11: Turning off
+  }
+  [*] --> s1
+  [*] --> s2
+  s1 --> s2: a terminal turns it on
+  s1 --> s4: you turn it on
+  s2 --> s10: you turn it off
+  s2 --> s4: you click Change folders
+  s4 --> s5: the dialog reads the service
+  s10 --> s2: you cancel
+  s10 --> s11: you confirm
+  s5 --> s1: you cancel
+  s5 --> s6: you save
+  s5 --> s7: a terminal turns it on
+  s5 --> s2: you cancel
+  s11 --> s10: the call fails
+  s11 --> s1: the dialog closes
+  s7 --> s2: you cancel
+  s7 --> s6: you save
+  s6 --> s5: the call fails or residue refuses: the service changed
+  s10 --> s1: you cancel
+  s6 --> s8: residue service install writes it
+  s8 --> s7: the call fails
+  s8 --> s2: the dialog closes
+  s8 --> s5: the call fails
+  s6 --> s7: the call fails
+  class s1 teal
+  class s2 teal
+  class s4 blue
+  class s5 blue
+  class s6 blue
+  class s7 blue
+  class s8 blue
+  class s10 blue
+  class s11 blue
