@@ -6,7 +6,7 @@ import type { NotKept } from "./types";
 
 /**
  * Who removed a worktree and why, after "removed 3 days ago": residue's own
- * words (`removed::Reason::describe` at the repository root). A reason a
+ * words (`removed::Reason::describe` in residue-cli). A reason a
  * newer residue writes is shown as it is.
  */
 export function removedBy(reason: string | null): string {

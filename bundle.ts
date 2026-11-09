@@ -32,14 +32,15 @@ function lineOf(code: string, offset: number) {
   return line;
 }
 
-// What a module id is called in a message: its path in app/ or in its package.
+// What a module id is called in a message: its path in this repository or
+// in its package.
 function shortId(root: string, id: string) {
   const pkg = id.lastIndexOf("/node_modules/");
   if (pkg >= 0) return id.slice(pkg + "/node_modules/".length);
   return id.startsWith(`${root}/`) ? id.slice(root.length + 1) : id;
 }
 
-// -- Phosphor weights (#123) ------------------------------------------------
+// -- Phosphor weights (residue-cli#123) -------------------------------------
 //
 // Each @phosphor-icons/react 2.1.10 icon imports dist/defs/NAME.es.js, a Map
 // of its drawing in all six weights, and picks one when it renders, from its
@@ -233,7 +234,7 @@ export function phosphorWeights(): Plugin[] {
           ) {
             this.error(
               `${shortId(root, id)} is not the six-weight Map this transform reads. ` +
-                "Phosphor's layout changed: check dist/defs, then update phosphorWeights in app/bundle.ts.",
+                "Phosphor's layout changed: check dist/defs, then update phosphorWeights in bundle.ts.",
             );
           }
           const kept = entries.filter((m) => KEPT.has(m[1]!)).map((m) => m[0]);
@@ -249,7 +250,7 @@ export function phosphorWeights(): Plugin[] {
             if (!PHOSPHOR_KNOWN.test(id) || (DEFS.test(id) && !rewritten.has(id))) {
               this.error(
                 `${shortId(root, id)} is a Phosphor module the weights transform does not know. ` +
-                  "Phosphor's layout changed: check it, then update phosphorWeights in app/bundle.ts.",
+                  "Phosphor's layout changed: check it, then update phosphorWeights in bundle.ts.",
               );
             }
           }
@@ -296,7 +297,7 @@ export function phosphorWeights(): Plugin[] {
             [
               `The build keeps only Phosphor's ${[...KEPT].join(", ").replace(/, (\w+)$/, " and $1")} weights, so these icons would render blank:`,
               ...lines,
-              "Use one of those weights, or add it to KEPT in app/bundle.ts.",
+              "Use one of those weights, or add it to KEPT in bundle.ts.",
             ].join("\n"),
           );
         }
@@ -305,7 +306,7 @@ export function phosphorWeights(): Plugin[] {
   ];
 }
 
-// -- Kumo chunks in the stylesheet's scan (#124) ----------------------------
+// -- Kumo chunks in the stylesheet's scan (residue-cli#124) -----------------
 //
 // src/styles.css scans only src/ and the chunks of the Kumo components the
 // app draws, with `@import "tailwindcss" source(none)`, so a component

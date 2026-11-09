@@ -1,4 +1,4 @@
-/** The residue mark (docs/assets/logo-dark.svg in whiteheap/residue, same geometry). */
+/** The residue mark (docs/assets/logo-dark.svg in whiteheap/residue-cli, same geometry). */
 export function Mark({ className }: { className?: string }) {
   return (
     <svg viewBox="26 66 180 182" className={className} aria-hidden focusable="false">

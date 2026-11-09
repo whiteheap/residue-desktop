@@ -1,0 +1,15 @@
+# The residue-cli release the app bundles as Contents/MacOS/residue-cli.
+# scripts/sidecar.sh reads this file.
+#
+# To move to another release:
+# - set version;
+# - set attested_as to the repository named in the release's build-provenance
+#   attestation: whiteheap/residue for 0.0.10 and earlier, built before the
+#   rename, and whiteheap/residue-cli after it;
+# - copy each macOS archive's checksum from that release's SHA256SUMS;
+# - read the release's CHANGELOG entry, and update what the app says about
+#   residue's behavior in the same pull request (AGENTS.md, "Invariants").
+version=0.0.10
+attested_as=whiteheap/residue
+sha256_aarch64-apple-darwin=271a70f5b161561e0800a8a11611bea829c850fb8c1a1dc14e98f67d05a698da
+sha256_x86_64-apple-darwin=f6a29012c53bf5ab52dd0b94dff5e33ae39b0ae7d38bd6e36bd7f62859ecc258

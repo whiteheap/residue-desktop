@@ -1,6 +1,6 @@
 // What residue has freed, in residue's own words: `residue stats` and the
-// line a `remove` run ends with (src/stats.rs). Display only; every number
-// comes from residue's documents.
+// line a `remove` run ends with (src/stats.rs in residue-cli). Display only;
+// every number comes from residue's documents.
 
 import { bytes, plural } from "./format";
 import type { FreedBy, FreedSum, RemoveStats, StatsDocument } from "./types";
