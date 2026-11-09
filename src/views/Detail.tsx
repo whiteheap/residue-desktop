@@ -1,13 +1,13 @@
 import { Button } from "@cloudflare/kumo";
 import { ArrowClockwise, ArrowLeft, Check, FolderOpen, Question, Trash, X } from "@phosphor-icons/react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Command, ErrorPanel, Loading, PageHeader, SolidButton, VerdictTag, Words } from "../components/ui";
 import { Meter } from "../components/viz/Meter";
 import { SegmentedBar } from "../components/viz/SegmentedBar";
 import { api } from "../lib/api";
 import { age, baseName, bytes, grouped, shortHead, tilde } from "../lib/format";
-import type { CheckStatus, IgnoredEntry, Check as ResidueCheck, Size, Worktree } from "../lib/types";
+import type { CheckStatus, IgnoredEntry, InFlight, Check as ResidueCheck, Size, Worktree } from "../lib/types";
 import { documentTime, useCli } from "../lib/useCli";
 import { composition, shareText } from "../lib/viz";
 import { VERDICT_HELP, branchLabel, checkLabel, displayPath, keptBy, known, verdictHelp } from "../lib/worktree";
@@ -22,11 +22,14 @@ export function Detail({
   home,
   onBack,
   onRemove,
+  inFlight,
 }: {
   path: string;
   home: string | undefined;
   onBack: () => void;
   onRemove: (paths: string[]) => void;
+  /** Whether a confirmed removal runs (#12): Move to the trash is off unless "none". */
+  inFlight: InFlight;
 }) {
   const q = useCli(path, () => api.explain(path));
   // Another worktree's report is not shown as this one's.
@@ -35,6 +38,7 @@ export function Detail({
   const loading = q.loading;
   const load = q.reload;
   const [revealError, setRevealError] = useState<string | null>(null);
+  const removalNote = useId();
 
   const w = doc?.worktree;
   const shown = w ? displayPath(w) : path;
@@ -86,11 +90,21 @@ export function Detail({
                   Show in Finder
                 </Button>
                 {w.verdict === "candidate" ? (
-                  <SolidButton icon={<Trash />} onClick={() => onRemove([w.path])}>
+                  <SolidButton
+                    icon={<Trash />}
+                    disabled={inFlight !== "none"}
+                    aria-describedby={inFlight === "running" ? removalNote : undefined}
+                    onClick={() => onRemove([w.path])}
+                  >
                     Move this worktree to the trash…
                   </SolidButton>
                 ) : null}
               </div>
+              {w.verdict === "candidate" && inFlight === "running" ? (
+                <p className="hint" id={removalNote}>
+                  A removal is still running.
+                </p>
+              ) : null}
               {revealError ? <p className="hint">Could not open Finder: {revealError}</p> : null}
             </section>
 

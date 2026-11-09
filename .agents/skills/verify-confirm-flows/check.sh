@@ -6,9 +6,10 @@
 #   bash .agents/skills/verify-confirm-flows/check.sh
 #
 # Checks each model in the setups below, then runs each mutant in
-# model/mutants, a model with one guard of the code removed, which must
-# fail its rule. The result must match model/expected: every rule holds
-# except the known breaks listed there, each with its shortest path.
+# model/mutants, a model with one guard of the code removed (or each guard
+# a line joins with +), which must fail its rule. The result must match
+# model/expected: every rule holds except the known breaks listed there,
+# each with its shortest path.
 #
 # Exit status: 0 the result matches model/expected, 1 it does not, 2 the
 # tools could not be set up or TLC did not run.
@@ -229,7 +230,8 @@ while read -r mutant setup rule; do
     failed=1
     continue
   fi
-  result=$(tlc "$setup" "{\"$mutant\"}" "$rule" 2>"$work/last")
+  # A+B removes both guards: Broken = {"A", "B"}.
+  result=$(tlc "$setup" "{\"$(echo "$mutant" | sed 's/+/", "/g')\"}" "$rule" 2>"$work/last")
   case $result in
     "breaks $rule"*) echo "mutant $mutant: caught by ${result#breaks }" ;;
     holds*) echo "mutant $mutant: NOT caught, $rule still holds"; failed=1 ;;
@@ -252,6 +254,11 @@ fi
 echo
 echo "$(grep -m1 -o 'TLC2 Version [^ ]*' "$(cat "$work/last")"), $("$java" -version 2>&1 | head -1); $(( $(date +%s) - start_time ))s"
 if [ "$failed" = 0 ]; then
-  echo "matches model/expected: every rule holds except the $(wc -l < "$work/expected" | tr -d ' ') known breaks listed there, and every mutant is caught"
+  known=$(wc -l < "$work/expected" | tr -d ' ')
+  if [ "$known" = 0 ]; then
+    echo "matches model/expected: every rule holds, and every mutant is caught"
+  else
+    echo "matches model/expected: every rule holds except the $known known breaks listed there, and every mutant is caught"
+  fi
 fi
 exit "$failed"

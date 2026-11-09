@@ -2777,6 +2777,7 @@ name = "residue-app"
 version = "0.0.0"
 dependencies = [
  "block2",
+ "libc",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-web-kit",

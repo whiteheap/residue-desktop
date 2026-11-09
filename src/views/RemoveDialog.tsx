@@ -100,11 +100,17 @@ export function RemoveDialog({
         {phase.step === "error" ? (
           <>
             <Dialog.Description className="dialog-text">
-              {phase.plan
-                ? "residue stopped before it reported. Scan again to see what moved."
-                : "residue could not make a plan, so nothing moved."}
+              {/* Kind invalid: the app ran nothing, such as while another removal runs (#12). */}
+              {!phase.plan
+                ? "residue could not make a plan, so nothing moved."
+                : phase.error.kind === "invalid"
+                  ? "This removal did not start, so nothing moved."
+                  : "residue stopped before it reported. Scan again to see what moved."}
             </Dialog.Description>
-            <ErrorPanel title="residue remove failed" error={phase.error} />
+            <ErrorPanel
+              title={phase.error.kind === "invalid" ? "residue remove did not start" : "residue remove failed"}
+              error={phase.error}
+            />
             <div className="dialog-buttons">
               <SolidButton onClick={onClose}>Close</SolidButton>
             </div>

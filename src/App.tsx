@@ -15,7 +15,7 @@ import { ErrorPanel, Loading } from "./components/ui";
 import { api, changingService } from "./lib/api";
 import { cleanedSinceLastOpen, rememberFreed, sinceLastOpen } from "./lib/freed";
 import { bytes } from "./lib/format";
-import type { Settings } from "./lib/types";
+import type { InFlight, Settings } from "./lib/types";
 import type { Filter } from "./lib/viz";
 import { useCli } from "./lib/useCli";
 import { Automatic } from "./views/Automatic";
@@ -79,6 +79,41 @@ export function App() {
   // removal in this session never adds to it.
   const cleanedSum = stats ? cleanedSinceLastOpen(stats) : null;
   const cleaned = cleanedSum && stats ? { ...cleanedSum, note: stats.estimate_note } : null;
+
+  // Whether a confirmed removal runs (#12). App asks src-tauri when it
+  // starts, which is also after the window started afresh or the app opened
+  // again, and each time the removal dialog closes, since a dialog that
+  // failed to draw can leave its run behind. Until the latest ask is
+  // answered, and while a removal runs, Move to the trash stays off; when
+  // the removal ends, the screen reads again.
+  const [asks, setAsks] = useState(0);
+  const [heard, setHeard] = useState<{ ask: number; runs: boolean } | null>(null);
+  const watchRemoval = useCallback(() => setAsks((n) => n + 1), []);
+  useEffect(() => {
+    let live = true;
+    api
+      .removalRunning()
+      .then((runs) => {
+        if (!live) return;
+        setHeard({ ask: asks, runs });
+        if (!runs) return;
+        return api.waitForRemoval().then(() => {
+          if (!live) return;
+          setHeard({ ask: asks, runs: false });
+          rescan();
+          reloadStats();
+        });
+      })
+      // src-tauri still refuses a second removal (`removal.rs`), so a failed
+      // ask leaves Move to the trash on rather than off for good.
+      .catch(() => {
+        if (live) setHeard({ ask: asks, runs: false });
+      });
+    return () => {
+      live = false;
+    };
+  }, [asks, rescan, reloadStats]);
+  const inFlight: InFlight = !heard || heard.ask !== asks ? "asking" : heard.runs ? "running" : "none";
 
   // What opened the detail (`data-opener`), so leaving the detail returns
   // focus there, as a keyboard or screen reader user left it.
@@ -253,7 +288,13 @@ export function App() {
           >
             {view === "worktrees" ? (
               detail ? (
-                <Detail path={detail} home={home} onBack={() => setDetail(null)} onRemove={setRemoving} />
+                <Detail
+                  path={detail}
+                  home={home}
+                  onBack={() => setDetail(null)}
+                  onRemove={setRemoving}
+                  inFlight={inFlight}
+                />
               ) : (
                 <Worktrees
                   doc={scanDoc}
@@ -270,6 +311,7 @@ export function App() {
                   onRescan={rescan}
                   onOpen={open}
                   onRemove={setRemoving}
+                  inFlight={inFlight}
                   onChooseFolders={() => go("folders")}
                   freed={stats ? { week: stats.freed.last_7_days, note: stats.estimate_note } : statsQ.error ? "unavailable" : null}
                   cleaned={cleaned}
@@ -317,18 +359,23 @@ export function App() {
       {removing ? (
         // The dialog's own boundary: a failure to draw a result after a
         // confirmed move stays in the dialog, and closing it scans again.
+        // Either way out asks whether a removal still runs.
         <ErrorBoundary
           onClose={() => {
             setRemoving(null);
             rescan();
             reloadStats();
+            watchRemoval();
           }}
         >
           <RemoveDialog
             paths={removing}
             estimateNote={stats?.estimate_note}
             home={home}
-            onClose={() => setRemoving(null)}
+            onClose={() => {
+              setRemoving(null);
+              watchRemoval();
+            }}
             onRemoved={(doc) => {
               const moved = new Set(doc.results.filter((r) => r.result === "trashed").map((r) => r.path));
               setSelected((sel) => new Set([...sel].filter((p) => !moved.has(p))));

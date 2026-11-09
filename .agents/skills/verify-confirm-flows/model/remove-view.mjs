@@ -16,7 +16,9 @@ const dialog = (d) => {
     case "done":
       return "Done: shows what moved";
     case "error":
-      return d.withPlan ? "Stopped: scan again to see what moved" : "No plan: nothing moved";
+      if (d.withPlan) return "Stopped: scan again to see what moved";
+      // A confirm src-tauri refused while another removal ran (#12).
+      return d.planFor.length > 0 ? "Did not start: nothing moved" : "No plan: nothing moved";
     case "broken":
       return "Could not draw: Close";
     default:
@@ -53,12 +55,16 @@ const labels = {
   RunLands: () => "residue reports what moved",
   RunFails: () => "the run fails",
   YouClose: () => "you close it",
+  HeardLands: () => "the app hears whether a removal runs",
+  RemovalEnds: () => "the removal ends",
+  HeardFails: () => "the app cannot tell whether a removal runs",
   DrawFails: () => "the dialog fails to draw",
   YouCloseBrokenDialog: () => "you click Close",
-  Reload: () => "the window starts afresh",
+  TryAgain: () => "the window starts afresh",
+  Relaunch: () => "you quit and open the app again",
 };
 
-// With RemoveChart.cfg, ticking, the checks, a scan you start, and the
-// moves while the dialog shows Moving stay in one chart state, so the chart
-// does not draw them.
+// With RemoveChart.cfg, ticking, the checks, a scan you start, the app's
+// ask whether a removal runs, and the moves while the dialog shows Moving
+// stay in one chart state, so the chart does not draw them.
 export const step = (action) => (labels[action] ? labels[action]() : null);

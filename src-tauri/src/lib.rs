@@ -10,6 +10,7 @@ mod cli;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod devshot;
 mod env;
+mod removal;
 mod service;
 mod settings;
 
@@ -36,6 +37,9 @@ struct State {
     dev: service::DevPreview,
     /// The one save or turn-off of automatic cleanup that runs.
     changes: service::Changes,
+    /// The one confirmed removal that runs, this app's or, after a
+    /// relaunch, the one an earlier launch left running (#12).
+    removals: removal::Removals,
     /// The bundled residue's version, once a read has given it.
     version: Mutex<Option<String>>,
 }
@@ -48,6 +52,17 @@ impl State {
         args: Vec<OsString>,
         cwd: &Path,
         deadline: Duration,
+    ) -> Result<cli::Output, CliError> {
+        self.run_with(args, cwd, deadline, |_| {})
+    }
+
+    /// `run`, calling `started` with residue's PID once it runs.
+    fn run_with(
+        &self,
+        args: Vec<OsString>,
+        cwd: &Path,
+        deadline: Duration,
+        started: impl FnOnce(u32),
     ) -> Result<cli::Output, CliError> {
         if !self.sidecar.is_file() {
             return Err(CliError {
@@ -68,7 +83,7 @@ impl State {
             path_env: &env::path().0,
             deadline,
         }
-        .output()
+        .output_with(started)
     }
 
     /// The bundled residue's version. The binary ships inside the app, so the
@@ -218,6 +233,13 @@ struct Removal {
 /// and the expired trash entries the run would purge. The confirmation dialog
 /// shows that plan. With `--yes`, residue checks every path once more before
 /// it moves it, and keeps any that changed.
+///
+/// One confirmed removal runs at a time (#12): it holds `s.removals` from
+/// before residue starts until it returns, and another is refused, with kind
+/// `invalid` and running nothing, while one is in flight, also one an earlier
+/// launch of the app left running (`removal.rs`). A plan is not refused: it
+/// moves nothing, and the window keeps Move to the trash off while a
+/// removal is in flight.
 fn remove(s: &State, paths: &[String], confirmed: bool) -> Result<Removal, CliError> {
     if paths.is_empty() {
         return Err(CliError::invalid("no worktrees were selected"));
@@ -229,7 +251,17 @@ fn remove(s: &State, paths: &[String], confirmed: bool) -> Result<Removal, CliEr
     for p in paths {
         args.push(absolute(p)?.into_os_string());
     }
-    let out = s.run(args, &s.home, REMOVE_DEADLINE)?;
+    let mut removing = if confirmed {
+        Some(s.removals.start()?)
+    } else {
+        None
+    };
+    let out = s.run_with(args, &s.home, REMOVE_DEADLINE, |pid| {
+        if let Some(r) = removing.as_mut() {
+            r.record(pid);
+        }
+    })?;
+    drop(removing);
     // 0: every path went to the trash. 3: at least one stayed (or, for the
     // plan, nothing was confirmed), and the document says why. Anything else
     // is an error without a document.
@@ -252,6 +284,25 @@ async fn plan_removal(state: AppState<'_>, paths: Vec<String>) -> Result<Removal
 #[tauri::command]
 async fn remove_to_trash(state: AppState<'_>, paths: Vec<String>) -> Result<Removal, CliError> {
     blocking(&state, move |s| remove(s, &paths, true)).await
+}
+
+/// Whether a confirmed removal is in flight, this app's or one an earlier
+/// launch left running (#12). The window asks when it starts and when the
+/// removal dialog closes, and keeps Move to the trash off while one is.
+#[tauri::command]
+async fn removal_running(state: AppState<'_>) -> Result<bool, CliError> {
+    blocking(&state, |s| Ok(s.removals.running())).await
+}
+
+/// Returns once no confirmed removal is in flight, at once when none is. The
+/// window then scans again.
+#[tauri::command]
+async fn wait_for_removal(state: AppState<'_>) -> Result<(), CliError> {
+    blocking(&state, |s| {
+        s.removals.wait();
+        Ok(())
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -424,13 +475,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let paths = app.path();
+            let data_dir = paths.app_local_data_dir()?;
             let state = State {
                 sidecar: sidecar()?,
                 home: env::home().ok_or("HOME is not set")?,
                 config_dir: paths.app_config_dir()?,
-                data_dir: paths.app_local_data_dir()?,
                 dev: service::DevPreview::from_env(),
                 changes: service::Changes::default(),
+                removals: removal::Removals::open(&data_dir),
+                data_dir,
                 version: Mutex::new(None),
             };
             app.manage(Arc::new(state));
@@ -450,6 +503,8 @@ pub fn run() {
             explain,
             plan_removal,
             remove_to_trash,
+            removal_running,
+            wait_for_removal,
             list_restorable,
             restore,
             stats,

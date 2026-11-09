@@ -14,7 +14,7 @@ import {
 } from "../components/ui";
 import { baseName, bytes, inside, plural, tilde } from "../lib/format";
 import { localTime } from "../lib/freed";
-import type { CliError, FreedSum, Repository, ScanDocument, Worktree } from "../lib/types";
+import type { CliError, FreedSum, InFlight, Repository, ScanDocument, Worktree } from "../lib/types";
 import { documentTime } from "../lib/useCli";
 import { matches, type Filter } from "../lib/viz";
 import { branchLabel, displayPath, sizeOf, summary } from "../lib/worktree";
@@ -41,6 +41,7 @@ export function Worktrees({
   onRescan,
   onOpen,
   onRemove,
+  inFlight,
   onChooseFolders,
   freed,
   cleaned,
@@ -61,6 +62,8 @@ export function Worktrees({
   onRescan: () => void;
   onOpen: (path: string) => void;
   onRemove: (paths: string[]) => void;
+  /** Whether a confirmed removal runs (#12): Move to the trash is off unless "none". */
+  inFlight: InFlight;
   onChooseFolders: () => void;
   /** What residue freed in the last 7 days and its estimate note; "unavailable" when its stats could not be read, null while they are read. */
   freed: { week: FreedSum; note: string } | "unavailable" | null;
@@ -89,6 +92,7 @@ export function Worktrees({
   );
   const chosen = [...selected].filter((p) => candidates.has(p));
   const chosenBytes = chosen.reduce((sum, p) => sum + (sizeOf(candidates.get(p)!) ?? 0), 0);
+  const removalNote = useId();
 
   const header = (
     <PageHeader
@@ -222,12 +226,22 @@ export function Worktrees({
           <p>
             <strong>{plural(chosen.length, "worktree")}</strong> selected,{" "}
             <span className="num">{bytes(chosenBytes)}</span>
+            {inFlight === "running" ? (
+              <>
+                . <span id={removalNote}>A removal is still running.</span>
+              </>
+            ) : null}
           </p>
           <div className="action-bar-buttons">
             <Button variant="ghost" onClick={() => onSelect(chosen, false)}>
               Clear
             </Button>
-            <SolidButton icon={<Trash />} onClick={() => onRemove(chosen)}>
+            <SolidButton
+              icon={<Trash />}
+              disabled={inFlight !== "none"}
+              aria-describedby={inFlight === "running" ? removalNote : undefined}
+              onClick={() => onRemove(chosen)}
+            >
               Move {chosen.length} to the trash…
             </SolidButton>
           </div>

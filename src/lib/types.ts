@@ -364,6 +364,12 @@ export type Restorable = {
 
 export type ErrorKind = "missing" | "failed" | "timeout" | "bad_output" | "invalid";
 
+/**
+ * Whether a confirmed removal runs, as the window last heard from src-tauri
+ * (#12): "asking" until it answers. Move to the trash is off unless "none".
+ */
+export type InFlight = "asking" | "none" | "running";
+
 /** What the Rust side returns when a residue run fails. */
 export interface CliError {
   kind: ErrorKind;
