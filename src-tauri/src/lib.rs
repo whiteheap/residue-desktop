@@ -227,12 +227,45 @@ struct Removal {
     exit_code: Option<i32>,
 }
 
-/// `residue remove --trash --json PATH...`, with `--yes` only when the user
-/// confirmed. Without `--yes`, and with stdin that is not a terminal, residue
-/// removes and purges nothing and prints its plan: each path checked again,
-/// and the expired trash entries the run would purge. The confirmation dialog
-/// shows that plan. With `--yes`, residue checks every path once more before
-/// it moves it, and keeps any that changed.
+/// The `generated_at` of the plan a confirm runs, passed as `--as-of` (#13).
+/// residue then measures every age at that time, so the run purges and
+/// forgets only what the plan could list. Only the form a plan's
+/// `generated_at` has, RFC 3339 in UTC with whole seconds such as
+/// `2026-11-09T12:00:00Z`: residue also takes a `+HH:MM` offset, which no
+/// plan has. residue checks the date itself, and refuses one that does not
+/// exist with exit status 2, before it acts.
+struct AsOf(String);
+
+impl AsOf {
+    fn of_plan(generated_at: Option<String>) -> Result<AsOf, CliError> {
+        let Some(time) = generated_at else {
+            return Err(CliError::invalid(
+                "the plan has no time to confirm it at; close and try again",
+            ));
+        };
+        let shape = b"dddd-dd-ddTdd:dd:ddZ";
+        let fits = time.len() == shape.len()
+            && time.bytes().zip(shape).all(|(b, &want)| match want {
+                b'd' => b.is_ascii_digit(),
+                _ => b == want,
+            });
+        if !fits {
+            return Err(CliError::invalid(format!(
+                "the plan's time {time:?} is not one residue writes; close and try again"
+            )));
+        }
+        Ok(AsOf(time))
+    }
+}
+
+/// `residue remove --trash --json PATH...`, and once the user confirmed,
+/// `--yes --as-of TIME` with the time of the plan they saw (`confirmed`).
+/// Without `--yes`, and with stdin that is not a terminal, residue removes
+/// and purges nothing and prints its plan: each path checked again, the
+/// expired trash entries the run would purge and the removal records it
+/// would forget. The confirmation dialog shows that plan. With `--yes`,
+/// residue checks every path once more before it moves it, and keeps any
+/// that changed; with `--as-of`, it judges every age at the plan's time.
 ///
 /// One confirmed removal runs at a time (#12): it holds `s.removals` from
 /// before residue starts until it returns, and another is refused, with kind
@@ -240,18 +273,18 @@ struct Removal {
 /// launch of the app left running (`removal.rs`). A plan is not refused: it
 /// moves nothing, and the window keeps Move to the trash off while a
 /// removal is in flight.
-fn remove(s: &State, paths: &[String], confirmed: bool) -> Result<Removal, CliError> {
+fn remove(s: &State, paths: &[String], confirmed: Option<AsOf>) -> Result<Removal, CliError> {
     if paths.is_empty() {
         return Err(CliError::invalid("no worktrees were selected"));
     }
     let mut args: Vec<OsString> = vec!["remove".into(), "--trash".into(), "--json".into()];
-    if confirmed {
-        args.push("--yes".into());
+    if let Some(AsOf(time)) = &confirmed {
+        args.extend(["--yes".into(), "--as-of".into(), time.into()]);
     }
     for p in paths {
         args.push(absolute(p)?.into_os_string());
     }
-    let mut removing = if confirmed {
+    let mut removing = if confirmed.is_some() {
         Some(s.removals.start()?)
     } else {
         None
@@ -277,13 +310,23 @@ fn remove(s: &State, paths: &[String], confirmed: bool) -> Result<Removal, CliEr
 /// The plan for moving `paths` to the trash. Removes nothing.
 #[tauri::command]
 async fn plan_removal(state: AppState<'_>, paths: Vec<String>) -> Result<Removal, CliError> {
-    blocking(&state, move |s| remove(s, &paths, false)).await
+    blocking(&state, move |s| remove(s, &paths, None)).await
 }
 
-/// Move the confirmed `paths` to their repositories' trash.
+/// Move the confirmed `paths` to their repositories' trash, judging ages at
+/// `as_of`, the `generated_at` of the plan the dialog showed (#13). Without
+/// it, or with a value that is not a plan's time, it runs nothing and
+/// returns kind `invalid`.
 #[tauri::command]
-async fn remove_to_trash(state: AppState<'_>, paths: Vec<String>) -> Result<Removal, CliError> {
-    blocking(&state, move |s| remove(s, &paths, true)).await
+async fn remove_to_trash(
+    state: AppState<'_>,
+    paths: Vec<String>,
+    as_of: Option<String>,
+) -> Result<Removal, CliError> {
+    blocking(&state, move |s| {
+        remove(s, &paths, Some(AsOf::of_plan(as_of)?))
+    })
+    .await
 }
 
 /// Whether a confirmed removal is in flight, this app's or one an earlier

@@ -2,8 +2,12 @@
 
 Up to 0.0.10, the Mac app shipped in each residue-cli release, with residue's version, and its notes are in [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md).
 
-## Unreleased
+## 0.0.11 (2026-11-09)
 
+The app's first release from this repository. It bundles residue 0.0.11.
+
+- A removal deletes from the trash and forgets only what its dialog listed. The dialog lists the old trash entries a removal deletes and the removal records it forgets, but the confirmed run read the clock again, so an entry or record that came of age while the dialog was open went too, unshown. The run now passes the shown plan's `generated_at` to `residue remove --yes --as-of`, which residue 0.0.11 adds, and residue judges every age at that time. A confirm whose plan has no such time moves nothing (#13).
+- After a restore fails, the Restore screen and the worktree list read again, since a failed restore can still have moved files. When what residue printed names `--to`, as in `residue restore RECORD --to NEWPATH`, which residue 0.0.11 prints for a trash restore whose worktree Git can no longer use after the move, the error shows it open and says to run that command in a terminal: the app restores only to the original path.
 - A restore that brings a worktree back on a new branch now names that branch and says why: the recorded branch no longer contains the recorded HEAD or is checked out in another worktree, and stays unchanged. Before, the line named the new branch where it meant the recorded one. residue 0.0.11 restores a worktree whose branch another worktree has checked out this way, where 0.0.10 refused.
 - One removal moves worktrees to the trash at a time, also when you quit the app and open it again while one runs. Until it ends, Move to the trash stays off, with "A removal is still running." beside it, and then the list scans again. The app refuses a second removal meanwhile, with "another removal is still running; try again when it ends", and moves nothing. While residue runs, `removal-running.json` in the app's data folder names its process, so an app that opens again finds the removal still running (#12).
 - The automatic cleanup dialog saves only what it shows. While Preview or Save runs, its folders and its mode cannot change, so a preview always ran on the folders ticked beside it (#9). While a save or turn-off runs, Command-1 to 5 and the sidebar keep the screen, and the app refuses a second save or turn-off until the first ends, with "another save or turn-off is still running; try again when it ends" (#10).

@@ -66,7 +66,12 @@ export const api = {
   scan: (roots: string[]) => call<ScanDocument>("scan", { roots }),
   explain: (path: string) => call<ExplainDocument>("explain", { path }),
   planRemoval: (paths: string[]) => call<Removal>("plan_removal", { paths }),
-  removeToTrash: (paths: string[]) => call<Removal>("remove_to_trash", { paths }),
+  /**
+   * `asOf` is the `generated_at` of the plan the dialog showed: residue
+   * judges every age at that time, so the run purges and forgets only what
+   * the plan could list (#13).
+   */
+  removeToTrash: (paths: string[], asOf: string) => call<Removal>("remove_to_trash", { paths, asOf }),
   /**
    * Whether a confirmed removal runs: this window's, or one src-tauri still
    * holds after the window started afresh or the app opened again (#12).
