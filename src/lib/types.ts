@@ -233,6 +233,8 @@ export interface RemoveDocument {
   errors: string[];
   /** Records residue could not read or forget, or a ledger it could not write; never a reason the run failed. */
   warnings: string[];
+  /** The time the run measured every age at: `--as-of` when given and earlier than the run's start, else `generated_at`. */
+  as_of: string;
   /** What this run freed and moved, and residue's total from its stats ledger (residue-cli#38). */
   stats: RemoveStats;
 }
