@@ -36,6 +36,10 @@ tauri = { version = "=2.12.5", features = [] }
 tauri-plugin-dialog = "=2.8.3"
 tauri-plugin-opener = "=2.7.2"
 
+# The tests check the window's capability with Tauri's mock runtime.
+[dev-dependencies]
+tauri = { version = "=2.12.5", features = ["test"] }
+
 # block2 and the objc2 crates: only the debug-build snapshot hook
 # (src/devshot.rs) calls them. libc: the removal marker reads the process a
 # removal runs (src/removal.rs). Tauri already depends on the same versions.

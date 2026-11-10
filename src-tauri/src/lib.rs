@@ -523,11 +523,47 @@ fn sidecar() -> Result<PathBuf, String> {
     Ok(dir.join("residue-cli"))
 }
 
+/// Whether the window may show `url`: only the app's own pages, which Tauri
+/// serves at `tauri://localhost`, and in a development build the dev server's
+/// (`dev`, `build.devUrl`). Every other navigation, a link, a redirect or a
+/// script that sets `location`, is refused, so no other page ever gets the
+/// app's commands.
+fn own_page(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
+    let bundled =
+        url.scheme() == "tauri" && url.host_str() == Some("localhost") && url.port().is_none();
+    bundled || dev.is_some_and(|dev| dev.origin() == url.origin())
+}
+
+/// Refuses every navigation `own_page` does not allow, in every webview.
+fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("navigation-guard")
+        .on_navigation(|webview, url| {
+            let dev = if cfg!(dev) {
+                webview.config().build.dev_url.clone()
+            } else {
+                None
+            };
+            let allowed = own_page(url, dev.as_ref());
+            if !allowed {
+                eprintln!("residue app: refused to navigate to {url}");
+            }
+            allowed
+        })
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let result = tauri::Builder::default()
+        .plugin(navigation_guard())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // Only reveal in Finder (Detail.tsx). Without the script it injects
+        // by default, a click on a link never asks it to open a URL.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .setup(|app| {
             let paths = app.path();
             let data_dir = paths.app_local_data_dir()?;
@@ -550,6 +586,7 @@ pub fn run() {
             devshot::start(app.handle());
             Ok(())
         })
+        // Each command is also in commands.rs, which grants it to the window.
         .invoke_handler(tauri::generate_handler![
             app_info,
             get_settings,
@@ -572,5 +609,138 @@ pub fn run() {
     if let Err(e) = result {
         eprintln!("residue app: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_page;
+    use tauri::Url;
+
+    include!("../commands.rs");
+
+    fn url(s: &str) -> Url {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn the_window_shows_only_the_apps_own_pages() {
+        for page in [
+            "tauri://localhost",
+            "tauri://localhost/",
+            "tauri://localhost/index.html",
+        ] {
+            assert!(own_page(&url(page), None), "{page}");
+        }
+        for page in [
+            "https://example.com/",
+            "http://localhost:1420/",
+            "http://127.0.0.1:1420/",
+            // macOS serves the app at tauri://localhost; this name is loopback.
+            "http://tauri.localhost/",
+            "https://tauri.localhost/",
+            "tauri://localhost:8080/",
+            "tauri://example.com/",
+            "file:///etc/hosts",
+            "about:blank",
+            "data:text/html,hi",
+            "blob:tauri://localhost/x",
+        ] {
+            assert!(!own_page(&url(page), None), "{page}");
+        }
+    }
+
+    #[test]
+    fn a_development_build_also_shows_its_dev_server() {
+        let dev = url("http://127.0.0.1:1420");
+        for page in [
+            "http://127.0.0.1:1420/",
+            "http://127.0.0.1:1420/src/main.tsx",
+            "tauri://localhost/",
+        ] {
+            assert!(own_page(&url(page), Some(&dev)), "{page}");
+        }
+        for page in [
+            "http://127.0.0.1:1421/",
+            "http://localhost:1420/",
+            "https://127.0.0.1:1420/",
+            "http://[::1]:1420/",
+            "http://example.com:1420/",
+        ] {
+            assert!(!own_page(&url(page), Some(&dev)), "{page}");
+        }
+    }
+
+    #[test]
+    fn the_page_policy_refuses_plugins_a_base_forms_and_framing() {
+        let context: tauri::Context<tauri::test::MockRuntime> =
+            tauri::generate_context!(test = true);
+        let csp = context
+            .config()
+            .app
+            .security
+            .csp
+            .as_ref()
+            .expect("a CSP")
+            .to_string();
+        for directive in [
+            "script-src 'self'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+        ] {
+            assert!(csp.contains(directive), "{directive} in {csp}");
+        }
+    }
+
+    /// The app's capability, with a handler that answers every command: only
+    /// what the capability grants the main window gets past Tauri's check.
+    fn call(cmd: &str) -> Result<(), serde_json::Value> {
+        let app = tauri::test::mock_builder()
+            .invoke_handler(|invoke| {
+                invoke.resolver.resolve("ok");
+                true
+            })
+            .build(tauri::generate_context!(test = true))
+            .expect("the app builds");
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("the main window");
+        tauri::test::get_ipc_response(
+            &main,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: url("tauri://localhost"),
+                body: tauri::ipc::InvokeBody::default(),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .map(|_| ())
+    }
+
+    #[test]
+    fn the_window_calls_every_app_command() {
+        for cmd in COMMANDS {
+            assert_eq!(call(cmd), Ok(()), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn the_window_calls_nothing_else() {
+        for cmd in [
+            "not_a_command",
+            "plugin:opener|open_url",
+            "plugin:opener|open_path",
+        ] {
+            let refused = call(cmd).expect_err(cmd);
+            assert!(
+                refused.to_string().contains("not allowed"),
+                "{cmd}: {refused}"
+            );
+        }
     }
 }
