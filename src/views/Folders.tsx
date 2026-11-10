@@ -11,25 +11,33 @@ export function Folders({
   settings,
   home,
   onSaved,
+  onConfirm,
 }: {
   settings: Settings;
   home: string | undefined;
   onSaved: (s: Settings) => void;
+  /** Save the suggested folders the user confirmed, those that still exist. */
+  onConfirm: (roots: string[]) => Promise<void>;
 }) {
   const [error, setError] = useState<CliError | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const save = async (roots: string[]) => {
+  const run = async (step: () => Promise<void>) => {
     setSaving(true);
     setError(null);
     try {
-      onSaved(await api.setRoots(roots));
+      await step();
     } catch (e) {
       setError(asCliError(e));
+      // A suggested folder deleted since the list was read makes every save
+      // of it refuse: read the suggestions again.
+      if (!settings.saved) api.settings().then(onSaved, () => {});
     } finally {
       setSaving(false);
     }
   };
+
+  const save = (roots: string[]) => run(async () => onSaved(await api.setRoots(roots)));
 
   const add = async () => {
     const picked = await openDialog({ directory: true, multiple: true, title: "Folders to scan" });
@@ -58,7 +66,7 @@ export function Folders({
               Found in your home folder, not scanned yet: a scan runs Git in every repository under
               them. Adding or removing one saves the list too.
             </p>
-            <SolidButton icon={<ArrowClockwise />} disabled={saving} onClick={() => save(settings.roots)}>
+            <SolidButton icon={<ArrowClockwise />} disabled={saving} onClick={() => run(() => onConfirm(settings.roots))}>
               Scan these folders
             </SolidButton>
           </div>

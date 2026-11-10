@@ -1,6 +1,7 @@
 import { Button, Empty } from "@cloudflare/kumo";
 import { ArrowClockwise, ArrowCounterClockwise, ClockCounterClockwise } from "@phosphor-icons/react";
 import { useState } from "react";
+import { ConfirmFolders } from "../components/ConfirmFolders";
 import { ErrorPanel, Flags, FlagWords, Loading, PageHeader } from "../components/ui";
 import { Meter } from "../components/viz/Meter";
 import { api, asCliError } from "../lib/api";
@@ -144,6 +145,9 @@ function restoredText(doc: RestoreDocument, item: Restorable, home: string | und
 
 export function Restore({
   roots,
+  unconfirmed,
+  onConfirm,
+  onChooseFolders,
   home,
   keepTrash,
   keepRemoved,
@@ -151,6 +155,11 @@ export function Restore({
   onRestored,
 }: {
   roots: string[];
+  /** The usual code folders, offered until the user saves a list (`unconfirmedRoots`). */
+  unconfirmed: string[];
+  /** Save the folders the user confirmed. */
+  onConfirm: (roots: string[]) => Promise<void>;
+  onChooseFolders: () => void;
   home: string | undefined;
   /** residue's default `--keep-trash` (`7d`), which the app's removals use. */
   keepTrash: string | undefined;
@@ -262,7 +271,14 @@ export function Restore({
           </section>
         ) : null}
 
-        {roots.length === 0 ? (
+        {roots.length === 0 && unconfirmed.length > 0 ? (
+          <ConfirmFolders
+            folders={unconfirmed}
+            home={home}
+            onConfirm={onConfirm}
+            onChooseFolders={onChooseFolders}
+          />
+        ) : roots.length === 0 ? (
           <Empty
             title="No folders to look in"
             description="Choose folders first, in Folders."

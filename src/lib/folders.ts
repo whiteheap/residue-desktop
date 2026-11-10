@@ -16,3 +16,14 @@ export function confirmedRoots(settings: Pick<Settings, "roots" | "saved">): str
 export function unconfirmedRoots(settings: Pick<Settings, "roots" | "saved">): string[] {
   return settings.saved ? NONE : settings.roots;
 }
+
+/**
+ * The suggestions the user confirmed that a fresh read of the settings still
+ * suggests, so still exist: saving one deleted since the window read it
+ * would be refused, every time. Never a folder the user was not shown, and
+ * none once a list is saved.
+ */
+export function stillSuggested(shown: string[], fresh: Pick<Settings, "roots" | "saved">): string[] {
+  const now = new Set(unconfirmedRoots(fresh));
+  return shown.filter((f) => now.has(f));
+}
