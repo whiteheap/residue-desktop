@@ -1073,6 +1073,7 @@ fn copy_sidecar(ctx: &Context, dest: &Path, expected: Option<&str>) -> Result<()
         .ok_or_else(|| CliError::failed(format!("{} has no parent", dest.display())))?;
     std::fs::create_dir_all(dir)
         .map_err(|e| CliError::failed(format!("cannot create {}: {e}", dir.display())))?;
+    remove_leftovers(dir);
     let tmp = dir.join(format!(".residue.{}.tmp", std::process::id()));
     let result = (|| -> Result<(), String> {
         let mut from = std::fs::File::open(ctx.sidecar).map_err(|e| e.to_string())?;
@@ -1107,6 +1108,24 @@ fn copy_sidecar(ctx: &Context, dest: &Path, expected: Option<&str>) -> Result<()
     })
 }
 
+/// Remove the temporary copies an earlier launch left in `dir`, one that quit
+/// or crashed during a copy: `.residue.PID.tmp`. Only the app writes them,
+/// and one save runs at a time. A name it cannot remove stays; the copy
+/// below still writes a file of its own.
+fn remove_leftovers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(".residue.") && name.ends_with(".tmp") {
+            // Removes a link itself, never what it points to.
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// A new file at `path`, executable, opened only when nothing is there:
 /// `O_CREAT | O_EXCL`, and `O_NOFOLLOW`, so a link at that name is never
 /// written through. A file left there by an earlier launch whose process had
@@ -1138,8 +1157,9 @@ const NOFOLLOW: i32 = libc::O_NOFOLLOW;
 #[cfg(not(target_os = "macos"))]
 const NOFOLLOW: i32 = 0;
 
-/// The app's own copy as it was before a save, under a second name, a hard
-/// link in the same folder, until residue has written the agent file. A save
+/// The app's own copy as it was before a save, under a second name in the
+/// same folder, until residue has written the agent file: a hard link, or a
+/// copy of the file on a disk that has no hard links, such as exFAT. A save
 /// whose residue writes nothing puts it back (`restore`), so the service
 /// runs the residue it ran; one that wrote lets it go (`forget`). `kept` is
 /// `None` when there was no copy: then `restore` removes the one the save
@@ -1151,23 +1171,37 @@ struct Previous {
 
 impl Previous {
     fn keep(bin: &Path) -> Result<Previous, CliError> {
+        Previous::keep_with(bin, |from, to| std::fs::hard_link(from, to))
+    }
+
+    /// `keep`, with `link` making the second name's hard link.
+    fn keep_with(
+        bin: &Path,
+        link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<Previous, CliError> {
         let prev = bin.with_file_name(".residue.prev");
         remove_if_there(&prev)
             .map_err(|e| CliError::failed(format!("cannot remove {}: {e}", prev.display())))?;
-        let kept = match std::fs::hard_link(bin, &prev) {
-            Ok(()) => Some(prev),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                return Err(CliError::failed(format!(
-                    "cannot keep {} as {}: {e}",
-                    bin.display(),
-                    prev.display()
-                )));
-            }
+        let kept = match link(bin, &prev) {
+            Ok(()) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            // No hard link here: a copy of the file, permissions included.
+            Err(_) => match std::fs::copy(bin, &prev) {
+                Ok(_) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                Err(e) => {
+                    let _ = remove_if_there(&prev);
+                    return Err(CliError::failed(format!(
+                        "cannot keep {} as {}: {e}",
+                        bin.display(),
+                        prev.display()
+                    )));
+                }
+            },
         };
         Ok(Previous {
             bin: bin.to_path_buf(),
-            kept,
+            kept: kept.then_some(prev),
         })
     }
 
@@ -1342,11 +1376,14 @@ pub fn install(
         deadline: Duration::from_secs(60),
     }
     .output();
-    // A change to the agent file's bytes shows residue wrote it. The same
-    // bytes do not show it did not: a save of the same service writes them
-    // again, so no message below says that nothing changed.
+    // Exit 0: residue wrote the service. Exit 4: it wrote nothing, as its
+    // `--expect` promises. Any other failure: the agent file's bytes are the
+    // only sign, and a change to them is taken as residue's. The same bytes
+    // do not show residue did not write, since a save of the same service
+    // writes them again, so no message below says that nothing changed.
     let landed = matches!(&out, Ok(o) if o.code == Some(0));
-    let wrote = landed || std::fs::read(&plist).ok() != before;
+    let refused = matches!(&out, Ok(o) if o.code == Some(EXPECT_CHANGED));
+    let wrote = landed || (!refused && std::fs::read(&plist).ok() != before);
     if let Some(previous) = previous {
         let undo = if wrote {
             previous.forget()
@@ -1384,7 +1421,7 @@ pub fn install(
         return Err(out.error(
             ErrorKind::Failed,
             if wrote {
-                "residue wrote the service's agent file, then failed".into()
+                "residue failed after the service's agent file changed".into()
             } else {
                 "residue could not install the service".into()
             },
@@ -1662,7 +1699,7 @@ esac"#
 
         assert_eq!(
             err.message,
-            "residue wrote the service's agent file, then failed"
+            "residue failed after the service's agent file changed"
         );
         assert_eq!(
             version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
@@ -1719,6 +1756,67 @@ esac"#
             Some(OLDER)
         );
         assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    /// Exit 4 is residue's word that it wrote nothing, whatever the agent
+    /// file's bytes did meanwhile, such as a terminal's install.
+    #[test]
+    fn a_save_refused_with_exit_4_puts_back_the_copy_even_when_the_file_changed() {
+        let m = Machine::new(
+            "expect-changed-file",
+            BUNDLED,
+            &format!(
+                "f=Library/LaunchAgents/{LABEL}.plist; mkdir -p Library/LaunchAgents && plutil -create xml1 $f && plutil -insert ProgramArguments -json '[\"/elsewhere/residue\",\"watch\",\"/tmp\"]' $f; exit {EXPECT_CHANGED}"
+            ),
+        );
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+
+        assert!(matches!(m.save(BUNDLED), Ok(Save::Changed { .. })));
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(OLDER)
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    /// A disk with no hard links, such as exFAT, answers `hard_link` with
+    /// "Operation not supported": the copy is kept as a copy instead.
+    #[test]
+    fn put_back_where_the_disk_has_no_hard_links() {
+        let m = Machine::new("no-links", BUNDLED, "exit 0");
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+        let unsupported = |_: &Path, _: &Path| -> std::io::Result<()> {
+            Err(std::io::Error::from_raw_os_error(libc::ENOTSUP))
+        };
+
+        let previous = Previous::keep_with(&m.copy(), unsupported).unwrap();
+        assert!(previous.kept.is_some());
+        let want = format!("residue {BUNDLED}");
+        copy_sidecar(&m.ctx(BUNDLED), &m.copy(), Some(&want)).unwrap();
+        previous.restore().unwrap();
+
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(OLDER)
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_copy_removes_the_temporary_files_an_earlier_launch_left() {
+        let m = Machine::new("leftovers", BUNDLED, "exit 0");
+        let dir = m.copy().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".residue.4242.tmp"), "half a copy").unwrap();
+        let target = m.home.0.join("elsewhere");
+        std::fs::write(&target, "keep me").unwrap();
+        symlink(&target, dir.join(".residue.4243.tmp")).unwrap();
+
+        let want = format!("residue {BUNDLED}");
+        copy_sidecar(&m.ctx(BUNDLED), &m.copy(), Some(&want)).unwrap();
+
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep me");
     }
 
     #[test]
