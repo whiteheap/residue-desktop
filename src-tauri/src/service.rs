@@ -202,8 +202,10 @@ pub struct Status {
     /// the agent file says: residue writes the file before it restarts the
     /// job, so a save that failed after the write leaves the earlier job
     /// running until the next login. `None` when they agree, when launchd
-    /// runs nothing, or when its answer cannot be read. Only shown: a save is
-    /// still planned from the agent file (`basis`).
+    /// runs nothing, when its answer cannot be read, or when the difference
+    /// could be only in how it prints text outside ASCII
+    /// (`Job::shown_beside`). Only shown: a save is still planned from the
+    /// agent file (`basis`).
     pub launchd_job: Option<Job>,
     /// The development preview mode is on: nothing was installed.
     pub dev_dry_run: bool,
@@ -251,6 +253,32 @@ impl Job {
                 && p.dry_run == self.dry_run
                 && p.unknown == self.unknown
         })
+    }
+
+    /// Whether a difference from the agent file is one the screen can show:
+    /// the job differs, and no argument on either side is text whose
+    /// printing could be what differs. `launchctl print` is not an
+    /// interface, and how it writes a character outside ASCII, as is or
+    /// escaped, was not observed, so a job is not shown while either side
+    /// holds such a character, or launchd's side a backslash, which can
+    /// start an escape. Then the screen shows the file alone, as when
+    /// launchd's answer cannot be read.
+    fn shown_beside(&self, file: Option<&Program>) -> bool {
+        let printed = [&self.binary]
+            .into_iter()
+            .chain(&self.roots)
+            .chain(&self.options)
+            .chain(&self.unknown)
+            .all(|arg| arg.is_ascii() && !arg.contains('\\'));
+        let written = file.is_none_or(|p| {
+            [&p.binary]
+                .into_iter()
+                .chain(&p.roots)
+                .chain(&p.options)
+                .chain(&p.unknown)
+                .all(|arg| arg.is_ascii())
+        });
+        !self.is_the_file(file) && printed && written
     }
 }
 
@@ -657,7 +685,7 @@ fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError
         fingerprint_in(&out.stdout),
     );
     let launchd_job = if installed {
-        launchd_job(ctx).filter(|job| !job.is_the_file(program.as_ref()))
+        launchd_job(ctx).filter(|job| job.shown_beside(program.as_ref()))
     } else {
         None
     };
@@ -865,6 +893,53 @@ mod launchd_tests {
         ]);
         assert!(!running.is_the_file(Some(&other_binary)));
         assert!(!running.is_the_file(None));
+        // Every argument is plain ASCII on both sides: the difference shows.
+        assert!(running.shown_beside(Some(&saved)));
+        assert!(running.shown_beside(Some(&other_binary)));
+        assert!(running.shown_beside(None));
+    }
+
+    /// How `launchctl print` writes a character outside ASCII was not
+    /// observed: none of this Mac's loaded jobs has one, and loading one
+    /// changes launchd. A job that differs only where such text is, written
+    /// as is or escaped, is never shown as a difference.
+    #[test]
+    fn a_difference_that_printing_could_explain_is_not_shown() {
+        let saved = file(&["/opt/homebrew/bin/residue", "watch", "/Users/me/Café"]);
+        // launchd wrote the folder as is: the job is the file.
+        let raw = Job::of(&args(&[
+            "/opt/homebrew/bin/residue",
+            "watch",
+            "/Users/me/Café",
+        ]))
+        .unwrap();
+        assert!(raw.is_the_file(Some(&saved)));
+        assert!(!raw.shown_beside(Some(&saved)));
+        // launchd escaped it, in either form: not shown.
+        for printed in ["/Users/me/Caf\\303\\251", "/Users/me/Caf\\u00e9"] {
+            let escaped = Job::of(&args(&["/opt/homebrew/bin/residue", "watch", printed])).unwrap();
+            assert!(!escaped.is_the_file(Some(&saved)), "{printed}");
+            assert!(!escaped.shown_beside(Some(&saved)), "{printed}");
+            assert!(!escaped.shown_beside(None), "{printed}");
+        }
+        // A real difference beside a folder outside ASCII is not shown
+        // either: the screen shows the file alone, as when launchd's answer
+        // cannot be read.
+        let other = Job::of(&args(&[
+            "/opt/homebrew/bin/residue",
+            "watch",
+            "/Users/me/work",
+        ]))
+        .unwrap();
+        assert!(!other.shown_beside(Some(&saved)));
+        // A decomposed é in launchd's text against a composed one in the file.
+        let decomposed = Job::of(&args(&[
+            "/opt/homebrew/bin/residue",
+            "watch",
+            "/Users/me/Cafe\u{301}",
+        ]))
+        .unwrap();
+        assert!(!decomposed.shown_beside(Some(&saved)));
     }
 
     #[test]
