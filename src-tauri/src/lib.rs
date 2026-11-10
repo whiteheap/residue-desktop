@@ -722,6 +722,38 @@ mod tests {
         .map(|_| ())
     }
 
+    /// The commands `run` registers, read from this file's
+    /// `generate_handler!`, are the ones commands.rs lists, which build.rs
+    /// gives permissions to: a command in one list and not the other is
+    /// refused at its first call, or granted with nothing to run.
+    #[test]
+    fn the_handler_registers_the_commands_that_have_permissions() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("tauri::generate_handler![")
+            .expect("run registers its commands with generate_handler!");
+        let list = &source[start + "tauri::generate_handler![".len()..];
+        let list = &list[..list.find(']').expect("generate_handler! ends")];
+        let mut registered: Vec<&str> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .collect();
+        let mut listed: Vec<&str> = COMMANDS.to_vec();
+        registered.sort_unstable();
+        listed.sort_unstable();
+        let unique = |v: &[&str]| v.windows(2).all(|w| w[0] != w[1]);
+        assert!(
+            unique(&registered),
+            "a command registered twice: {registered:?}"
+        );
+        assert!(
+            unique(&listed),
+            "a command listed twice in commands.rs: {listed:?}"
+        );
+        assert_eq!(registered, listed);
+    }
+
     #[test]
     fn the_window_calls_every_app_command() {
         for cmd in COMMANDS {
