@@ -198,8 +198,60 @@ pub struct Status {
     pub plan: Plan,
     /// What a save is planned from; the window sends it back with the save.
     pub basis: Basis,
+    /// What launchd runs, read with `launchctl print`, when it is not what
+    /// the agent file says: residue writes the file before it restarts the
+    /// job, so a save that failed after the write leaves the earlier job
+    /// running until the next login. `None` when they agree, when launchd
+    /// runs nothing, or when its answer cannot be read. Only shown: a save is
+    /// still planned from the agent file (`basis`).
+    pub launchd_job: Option<Job>,
     /// The development preview mode is on: nothing was installed.
     pub dev_dry_run: bool,
+}
+
+/// A `residue watch` job as launchd holds it, from its `arguments`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Job {
+    pub binary: String,
+    pub roots: Vec<String>,
+    pub options: Vec<String>,
+    pub dry_run: bool,
+    /// Arguments that are neither an option nor a folder, or a program other
+    /// than `residue watch`, as for `Program.unknown`.
+    pub unknown: Vec<String>,
+}
+
+impl Job {
+    /// The job of these arguments, `binary watch ARGS...` or any other.
+    fn of(arguments: &[String]) -> Option<Job> {
+        let (binary, rest) = arguments.split_first()?;
+        let parsed = match rest.split_first() {
+            Some((command, args)) if command == "watch" => parse_watch(args),
+            _ => Parsed {
+                unknown: rest.to_vec(),
+                ..Parsed::default()
+            },
+        };
+        Some(Job {
+            binary: binary.clone(),
+            roots: parsed.roots,
+            options: parsed.options,
+            dry_run: parsed.dry_run,
+            unknown: parsed.unknown,
+        })
+    }
+
+    /// Whether the agent file says the same: binary, folders, options and
+    /// mode. No file never does.
+    fn is_the_file(&self, file: Option<&Program>) -> bool {
+        file.is_some_and(|p| {
+            p.binary == self.binary
+                && p.roots == self.roots
+                && p.options == self.options
+                && p.dry_run == self.dry_run
+                && p.unknown == self.unknown
+        })
+    }
 }
 
 /// Everything the save dialog shows about what a save installs and what it
@@ -536,6 +588,7 @@ fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError
                 program: Some(program),
                 plan,
                 basis,
+                launchd_job: None,
                 dev_dry_run: true,
             },
             None => Status {
@@ -550,6 +603,7 @@ fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError
                 program: None,
                 plan,
                 basis,
+                launchd_job: None,
                 dev_dry_run: true,
             },
         };
@@ -602,6 +656,11 @@ fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError
         &plan,
         fingerprint_in(&out.stdout),
     );
+    let launchd_job = if installed {
+        launchd_job(ctx).filter(|job| !job.is_the_file(program.as_ref()))
+    } else {
+        None
+    };
     let (log_lines, log_error) = match tail(&log_path, 40) {
         Ok(lines) => (lines, None),
         Err(e) => (Vec::new(), Some(e)),
@@ -618,9 +677,203 @@ fn read(ctx: &Context, dev: &DevPreview) -> Result<(Status, Installer), CliError
         program,
         plan,
         basis,
+        launchd_job,
         dev_dry_run: false,
     };
     Ok((status, installer))
+}
+
+/// The job launchd holds for the service, from `launchctl print`, which only
+/// reads. `None` when it fails or prints no `arguments` the app can read.
+#[cfg(target_os = "macos")]
+fn launchd_job(ctx: &Context) -> Option<Job> {
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let out = Run {
+        bin: Path::new("/bin/launchctl"),
+        args: vec!["print".into(), format!("gui/{uid}/{LABEL}").into()],
+        cwd: ctx.home,
+        path_env: ctx.path_env,
+        deadline: Duration::from_secs(10),
+    }
+    .output()
+    .ok()?;
+    if out.code != Some(0) {
+        return None;
+    }
+    Job::of(&launchd_arguments(&out.stdout)?)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launchd_job(_: &Context) -> Option<Job> {
+    None
+}
+
+/// The `arguments = { ... }` block of `launchctl print SERVICE`: one
+/// argument per line, each indented one tab more than the block's own
+/// line, which is the service's top level. Anything else in it, or a block
+/// that does not close, is `None`: never a guess.
+fn launchd_arguments(print: &str) -> Option<Vec<String>> {
+    let mut lines = print.lines();
+    lines.find(|l| *l == "\targuments = {")?;
+    let mut out = Vec::new();
+    for line in lines {
+        if line == "\t}" {
+            return (!out.is_empty()).then_some(out);
+        }
+        // A deeper line is not an argument, and a line that is not indented
+        // as one is the rest of an argument with a newline in it.
+        let arg = line.strip_prefix("\t\t")?;
+        if arg.starts_with('\t') {
+            return None;
+        }
+        out.push(arg.to_string());
+    }
+    None
+}
+
+#[cfg(test)]
+mod launchd_tests {
+    use super::*;
+
+    /// The shape `launchctl print gui/UID/com.whiteheap.residue.watch` has on
+    /// macOS 26, trimmed: tabs indent each level.
+    const PRINT: &str = "gui/501/com.whiteheap.residue.watch = {
+\tactive count = 1
+\tpath = /Users/me/Library/LaunchAgents/com.whiteheap.residue.watch.plist
+\ttype = LaunchAgent
+\tstate = running
+
+\tprogram = /opt/homebrew/bin/residue
+\targuments = {
+\t\t/opt/homebrew/bin/residue
+\t\twatch
+\t\t--grace
+\t\t1h
+\t\t--dry-run
+\t\t/Users/me/src
+\t\t/Users/me/My Code
+\t}
+
+\tinherited environment = {
+\t\tSSH_AUTH_SOCK => /private/tmp/com.apple.launchd.x/Listeners
+\t}
+
+\tpid = 20878
+\tproperties = keepalive | runatload | low priority i/o | inferred program
+}
+";
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn file(arguments: &[&str]) -> Program {
+        let job = Job::of(&args(arguments)).unwrap();
+        Program {
+            binary: job.binary,
+            binary_exists: true,
+            version: Some("residue 0.0.12".into()),
+            managed: false,
+            roots: job.roots,
+            other_options: other_options(&job.options),
+            settings: watch_settings(&job.options, Some("residue 0.0.12")),
+            options: job.options,
+            dry_run: job.dry_run,
+            unknown: job.unknown,
+        }
+    }
+
+    #[test]
+    fn reads_the_arguments_block() {
+        assert_eq!(
+            launchd_arguments(PRINT),
+            Some(args(&[
+                "/opt/homebrew/bin/residue",
+                "watch",
+                "--grace",
+                "1h",
+                "--dry-run",
+                "/Users/me/src",
+                "/Users/me/My Code",
+            ]))
+        );
+    }
+
+    #[test]
+    fn reads_nothing_it_cannot_be_sure_of() {
+        // No block, an empty one, one that does not close, a deeper line,
+        // and an argument with a newline in it.
+        assert_eq!(
+            launchd_arguments("gui/501/x = {\n\tstate = running\n}\n"),
+            None
+        );
+        assert_eq!(launchd_arguments("\targuments = {\n\t}\n"), None);
+        assert_eq!(
+            launchd_arguments("\targuments = {\n\t\t/bin/residue\n"),
+            None
+        );
+        assert_eq!(
+            launchd_arguments("\targuments = {\n\t\t/bin/residue\n\t\t\tdeeper\n\t}\n"),
+            None
+        );
+        assert_eq!(
+            launchd_arguments("\targuments = {\n\t\t/bin/residue\n/Users/me/a\nb\n\t}\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_job_that_matches_the_file_is_not_shown() {
+        let running = Job::of(&launchd_arguments(PRINT).unwrap()).unwrap();
+        assert_eq!(running.roots, args(&["/Users/me/src", "/Users/me/My Code"]));
+        assert!(running.dry_run);
+        assert_eq!(running.options, args(&["--grace", "1h"]));
+        let same = file(&[
+            "/opt/homebrew/bin/residue",
+            "watch",
+            "--grace",
+            "1h",
+            "--dry-run",
+            "/Users/me/src",
+            "/Users/me/My Code",
+        ]);
+        assert!(running.is_the_file(Some(&same)));
+    }
+
+    #[test]
+    fn a_job_the_file_no_longer_describes_is_shown() {
+        let running = Job::of(&launchd_arguments(PRINT).unwrap()).unwrap();
+        // A save wrote other folders and removing mode, then failed to
+        // restart the job.
+        let saved = file(&[
+            "/opt/homebrew/bin/residue",
+            "watch",
+            "--grace",
+            "1h",
+            "/Users/me/work",
+        ]);
+        assert!(!running.is_the_file(Some(&saved)));
+        let other_binary = file(&[
+            "/Users/me/Library/Application Support/com.whiteheap.residue/bin/residue",
+            "watch",
+            "--grace",
+            "1h",
+            "--dry-run",
+            "/Users/me/src",
+            "/Users/me/My Code",
+        ]);
+        assert!(!running.is_the_file(Some(&other_binary)));
+        assert!(!running.is_the_file(None));
+    }
+
+    #[test]
+    fn a_program_other_than_watch_is_unknown() {
+        let job = Job::of(&args(&["/bin/sh", "-c", "true"])).unwrap();
+        assert_eq!(job.unknown, args(&["-c", "true"]));
+        assert!(job.roots.is_empty());
+        assert_eq!(Job::of(&[]), None);
+    }
 }
 
 /// `launchd agent LABEL: running (pid 84497)` -> (`running`, 84497).

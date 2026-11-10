@@ -12,6 +12,7 @@ import type {
   CliError,
   ScanDocument,
   ServiceChange,
+  ServiceJob,
   ServicePlan,
   ServicePreview,
   ServiceProgram,
@@ -65,6 +66,10 @@ export function Automatic({
   const on = status?.installed ?? false;
   const program = status?.program ?? null;
   const preview = info?.dev_service_preview ?? false;
+  // launchd runs nothing, but the agent file is still there: a turn-off that
+  // stopped the job and could not remove the file. launchd may load it at
+  // the next login (RunAtLoad), so the screen is not a plain Off.
+  const leftOver = status !== null && !on && status.agent_file !== null && program !== null;
 
   return (
     <>
@@ -102,6 +107,22 @@ export function Automatic({
               />
               <p className="service-summary">{status.summary}</p>
             </div>
+            {leftOver && program && status.agent_file ? (
+              <div className="notice service-notice">
+                <p>
+                  <strong className="warn">Its agent file is still there. </strong>
+                  launchd may start it at your next login, watching {folderList(program.roots, home)}
+                  {program.dry_run ? " in log-only mode" : ""}. Remove it from a terminal:
+                </p>
+                <Command
+                  text={`${program.binary_exists ? shellWord(program.binary) : "residue"} service uninstall`}
+                />
+                <p className="hint">
+                  <code>{tilde(status.agent_file, home)}</code>
+                </p>
+              </div>
+            ) : null}
+            {on && status.launchd_job ? <EarlierJob job={status.launchd_job} file={program} home={home} /> : null}
             {on && program ? (
               <dl className="facts">
                 <div>
@@ -235,11 +256,49 @@ export function Automatic({
               onFailed={load}
             />
           ) : null}
-          {dialog === "off" ? <TurnOffDialog onClose={() => setDialog(null)} onChanged={changed} /> : null}
+          {dialog === "off" ? (
+            <TurnOffDialog
+              onClose={() => {
+                // A turn-off that failed may have stopped the job already.
+                setDialog(null);
+                load();
+              }}
+              onChanged={changed}
+            />
+          ) : null}
         </ErrorBoundary>
       ) : null}
     </>
   );
+}
+
+/**
+ * The job launchd runs when the agent file says otherwise: a save that failed
+ * after residue wrote the file leaves the earlier job running until the next
+ * login. Only shown; a save replaces the job.
+ */
+function EarlierJob({ job, file, home }: { job: ServiceJob; file: ServiceProgram | null; home: string | undefined }) {
+  return (
+    <div className="notice service-notice">
+      <p>
+        <strong className="warn">
+          {file ? "launchd still runs an earlier job. " : "launchd runs a job with no agent file. "}
+        </strong>
+        It watches {folderList(job.roots, home)}
+        {job.dry_run ? " and only logs" : " and removes worktrees"}
+        {file ? " until a save or your next login, when the agent file below starts instead." : "."}
+      </p>
+      {file?.binary !== job.binary ? (
+        <p className="hint">
+          It runs <code>{tilde(job.binary, home)}</code>.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function folderList(roots: string[], home: string | undefined): string {
+  return roots.length > 0 ? roots.map((r) => tilde(r, home)).join(", ") : "no folders";
 }
 
 /** The service's options this app does not know, such as one a newer residue added. */
@@ -731,6 +790,17 @@ function SaveForm({
           <p className="notice" role="alert">
             <strong className="warn">Cannot save. </strong>
             {plan.blocked}
+          </p>
+        ) : null}
+        {replacing && status.launchd_job ? (
+          <p className="hint">
+            launchd still runs an earlier job, watching {folderList(status.launchd_job.roots, home)}; a
+            save replaces it too.
+          </p>
+        ) : null}
+        {!replacing && status.agent_file ? (
+          <p className="hint">
+            It replaces the agent file left at <code>{tilde(status.agent_file, home)}</code>.
           </p>
         ) : null}
       </section>

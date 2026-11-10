@@ -122,9 +122,9 @@ Run the check for a change to any function in this table, or for one that adds a
 | `DrawFails`, `YouCloseBrokenDialog` | `App.tsx` the removal dialog's `ErrorBoundary` and its `onClose`, which scans again and calls `watchRemoval` |
 | `TryAgain`, `Reload` | `main.tsx` the last-resort `ErrorBoundary`, which draws App anew while src-tauri's `State` runs on; in SaveFlow (`Reload`) also a page that loads again |
 | `Relaunch` | A quit and a relaunch: `lib.rs` `run`'s setup, a new `State` whose `Removals::open` reads the marker (`removal.rs`, `read_marker`, `process`) |
-| `ScreenReads` | `Automatic.tsx` `useCli("service:...")`, Refresh, `closeSave` |
+| `ScreenReads` | `Automatic.tsx` `useCli("service:...")`, Refresh, `closeSave`, and the turn-off dialog's close, which reads again since a turn-off that failed may have stopped the job |
 | `YouOpenSave`, `YouOpenTurnOff` | `Automatic.tsx` the switch's `onChange` and "Change folders" (`setDialog`) |
-| `DialogReads` | `TurnOnDialog` `useCli("save-dialog")`; `service.rs` `read`, with `residue service status` run by `installs_as` and its `fingerprint:` line (`fingerprint_in`), and `plan` |
+| `DialogReads` | `TurnOnDialog` `useCli("save-dialog")`; `service.rs` `read`, with `residue service status` run by `installs_as` and its `fingerprint:` line (`fingerprint_in`), and `plan`. `read` also runs `launchctl print` for the job launchd holds (`launchd_job`), which the window only shows when it differs from the agent file: it is not in the basis, so the model leaves it out |
 | `YouTick` | `SaveForm` `toggle` and `add`, which hide a preview shown; the folder checkboxes and "Add a folder…", `disabled={locked}` while Preview or Save runs |
 | `YouPreview`, `PreviewLands`, `PreviewFails` | `SaveForm` `preview`, `api.servicePreview(roots)`; the Preview button's `disabled` |
 | `YouSave` | `SaveForm` `install`, which sends `status.basis`; the Save button's `disabled`, `plan.blocked` among it; the dialog's description |

@@ -1022,6 +1022,13 @@ dd {
   gap: 0.5rem;
 }
 
+/* A notice about the service: its text, then a command or a path. */
+.service-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .toggle {
   position: relative;
   display: inline-flex;

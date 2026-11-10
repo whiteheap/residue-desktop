@@ -493,7 +493,23 @@ export interface ServiceStatus {
   program: ServiceProgram | null;
   plan: ServicePlan;
   basis: ServiceBasis;
+  /**
+   * What launchd runs, from `launchctl print`, when it is not what the agent
+   * file says: after a save that failed past its write, the earlier job runs
+   * until the next login. Null when they agree or launchd's answer cannot be
+   * read. Only shown: a save is still planned from the agent file.
+   */
+  launchd_job: ServiceJob | null;
   dev_dry_run: boolean;
+}
+
+/** A `residue watch` job as launchd holds it. */
+export interface ServiceJob {
+  binary: string;
+  roots: string[];
+  options: string[];
+  dry_run: boolean;
+  unknown: string[];
 }
 
 export interface ServiceChange {
