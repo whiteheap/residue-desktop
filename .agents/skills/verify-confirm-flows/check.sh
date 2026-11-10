@@ -157,8 +157,8 @@ constants_of() {
       # copies and whether it goes back do not depend on the folders or the
       # options, which save/during checks, so one folder and the changes
       # that make residue refuse the write (on, off, mode) are enough; with
-      # two folders and every change, every rule held too, in 20,597,045
-      # states (6,715,847 distinct), against 251,579 here.
+      # two folders and every change, every rule held too, in 20,310,677
+      # states (6,545,231 distinct), against 247,419 here.
       printf '  %s\n' 'Folders = {"A"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
         'World = {"on", "off", "mode", "app"}' 'DuringSave = TRUE' 'Faults = {}' 'Copy = TRUE' ;;
     *) echo "check.sh: no setup $1" >&2; exit 2 ;;

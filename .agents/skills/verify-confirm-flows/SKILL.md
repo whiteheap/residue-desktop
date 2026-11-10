@@ -15,7 +15,7 @@ It is two TLA+ models of the app, `model/RemoveFlow.tla` and `model/SaveFlow.tla
 bash .agents/skills/verify-confirm-flows/check.sh
 ```
 
-It takes about four minutes and exits 0 when the result matches `model/expected`: every rule holds except the known breaks it lists, each with its shortest path, and every mutant is caught. It exits 1 when the result differs, and 2 when the tools cannot be set up or TLC fails.
+It takes about seven minutes and exits 0 when the result matches `model/expected`: every rule holds except the known breaks it lists, each with its shortest path, and every mutant is caught. It exits 1 when the result differs, and 2 when the tools cannot be set up or TLC fails.
 
 The first run downloads TLC and a Java runtime into `~/.cache/residue-tla` (or `$RESIDUE_TLA_TOOLS`), the cache residue-cli's model check uses, and checks each against its pinned SHA-256. It needs bash, curl, tar, and `shasum` or `sha256sum`. To use your own, set `TLA2TOOLS` to a tla2tools.jar and `JAVA` to a java binary (11 or later); the run says when either is not the pinned one.
 
@@ -85,7 +85,7 @@ Automatic cleanup: two folders, the app scanning one of them, a service that sta
 | `save/outside` | SaveFlow | none; every outside change, while no save or turn-off runs | 9,923,810 | 3,178,114 |
 | `save/during` | SaveFlow | none; every outside change, also while a save or turn-off runs (#11) | 16,747,760 | 5,306,018 |
 | `save/reload` | SaveFlow | the window starts afresh while a save or turn-off runs; one folder, no outside change | 77,392 | 24,243 |
-| `save/copy` | SaveFlow | none; a save with the app's own copy, and a new app put in place of this one or a terminal turning the service on or off or switching its mode, also while a save runs; one folder | 251,579 | 85,720 |
+| `save/copy` | SaveFlow | none; a save with the app's own copy, and a new app put in place of this one or a terminal turning the service on or off or switching its mode, also while a save runs; one folder | 247,419 | 83,516 |
 
 Each setup opens a dialog at most twice. Every rule holds in every setup, so each count is of one run with every rule. When a rule breaks, TLC stops at its first break and reports the shortest path, and check.sh checks the other rules again without it: a rule that breaks in a setup is not checked further there, and a new way to break it shows only if it is shorter.
 
@@ -171,7 +171,7 @@ Each mutant in `model/mutants` removes one guard the code has, or two joined by 
 | `NoExpect` | `install` passes the dialog's fingerprint as `--expect`, so residue writes only while the service still has it; run in `save/during` | `SaveIsWhatTheDialogShowed`, `ReplacesOnlyWhatItShowed`, `NeverDropsAnArgument` |
 | `NoBasisCheck+NoExpect` | `install` compares its read with the basis the dialog sent | `ReplacesOnlyWhatItShowed`, `SaveIsWhatTheDialogShowed` |
 | `BasisWithoutMode+NoExpect` | the basis holds the service's `--dry-run` | `ReplacesOnlyWhatItShowed` |
-| `BasisWithoutVersion+NoExpect` | the basis holds the version a save installs with | `SaveIsWhatTheDialogShowed` |
+| `BasisWithoutVersion+NoExpect` | the basis holds the version a save installs with, in `version` and in the release its fingerprint names (`fp`), which `install`'s comparison also reads | `SaveIsWhatTheDialogShowed` |
 | `RetryOnChange` | a changed service saves nothing until you click again | `ReplacesOnlyWhatItShowed` |
 | `SendsTheScreenBasis` | the dialog plans from its own read, not the screen's | `ReplacesOnlyWhatItShowed` |
 | `NoBlockedCheck+NoBasisCheck+NoExpect` | `install` refuses a blocked plan | `NeverDropsAnArgument` |

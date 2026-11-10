@@ -282,7 +282,7 @@ InstallChecks(i) ==
            ELSE IF Mut("BasisWithoutMode")
              THEN [fresh EXCEPT !.dry = FALSE] # [c.seen EXCEPT !.dry = FALSE]
            ELSE IF Mut("BasisWithoutVersion")
-             THEN [fresh EXCEPT !.ver = "none"] # [c.seen EXCEPT !.ver = "none"]
+             THEN [fresh EXCEPT !.ver = "none", !.fp = "none"] # [c.seen EXCEPT !.ver = "none", !.fp = "none"]
            ELSE fresh # c.seen
      IN calls' = [calls EXCEPT ![i] =
                     IF Refused(i)
@@ -333,7 +333,8 @@ InstallLands(i) ==
      IF Now # Fp(c.seen) /\ ~Mut("NoExpect")
        THEN /\ run' = PutBack(c)
             /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "changed", !.fresh = Read,
-                                                       !.freshBlocked = Blocked, !.after = run']]
+                                                       !.freshBlocked = Blocked,
+                                                       !.after = IF c.copied THEN run' ELSE c.after]]
             /\ UNCHANGED <<svc, last>>
        ELSE /\ svc' = [on |-> TRUE, roots |-> c.roots, dry |-> c.dry, opts |-> c.keep, odd |-> FALSE]
             /\ last' = [set |-> TRUE, before |-> svc, after |-> svc', ver |-> IF Copy THEN run ELSE ver,
@@ -350,7 +351,8 @@ InstallFails(i) ==
   /\ calls[i].kind = "install" /\ calls[i].phase \in {"sent", "checked", "copied"}
   /\ LET c == calls[i] IN
      /\ run' = PutBack(c)
-     /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "failed", !.after = run']]
+     /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "failed",
+                                               !.after = IF c.copied THEN run' ELSE c.after]]
   /\ UNCHANGED <<svc, ver, scr, dlg, last, n>>
 
 \* `Changes::start` in `uninstall`: refused while another call runs.
