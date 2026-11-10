@@ -47,13 +47,14 @@ Control-click > Open no longer skips this step: since macOS 15, Apple requires t
 
 ### Check a download
 
-Each release publishes the DMG with `SHA256SUMS` and a build-provenance attestation. In the folder that holds the DMG, with [gh](https://cli.github.com):
+Each release publishes the DMG with `SHA256SUMS` and a build-provenance attestation. In the folder that holds the DMG, with [gh](https://cli.github.com) and the release's tag in place of `vX.Y.Z`:
 
 ```sh
-gh attestation verify residue-macos.dmg --repo whiteheap/residue-ui
+gh attestation verify residue-macos.dmg --repo whiteheap/residue-ui --deny-self-hosted-runners \
+  --cert-identity https://github.com/whiteheap/residue-ui/.github/workflows/release.yml@refs/tags/vX.Y.Z
 ```
 
-Or, with the release's `SHA256SUMS` beside it, `shasum -a 256 -c SHA256SUMS`. A DMG from residue-cli's releases, 0.0.10 or earlier, verifies with `--repo whiteheap/residue`.
+`--cert-identity` names the workflow and the tag that must have built the DMG: `--repo` alone accepts an attestation from any workflow of the repository, at any branch or tag. Each release's notes give the command with its tag. Or, with the release's `SHA256SUMS` beside it, `shasum -a 256 -c SHA256SUMS`. A DMG from residue-cli's releases, 0.0.10 or earlier, verifies with `whiteheap/residue` in place of `whiteheap/residue-ui`, in both places.
 
 ## Screens
 

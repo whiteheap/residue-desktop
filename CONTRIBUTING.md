@@ -37,15 +37,15 @@ The bundle is `src-tauri/target/universal-apple-darwin/release/bundle/macos/resi
 
 ### The bundled residue
 
-The app bundles the residue CLI of one residue-cli release. `sidecar.lock` names its version and the sha256 of its two macOS archives, as that release's `SHA256SUMS` lists them. `scripts/sidecar.sh` places it where Tauri's `externalBin` takes it, `src-tauri/binaries/residue-cli-<target>`, and `tauri dev` and `tauri build` run that script first. Tauri copies the binary into the bundle as `Contents/MacOS/residue-cli`, beside the app's own executable, `residue`. Nothing in `src-tauri/binaries/` is committed.
+The app bundles the residue CLI of one residue-cli release. `sidecar.lock` names its version, the sha256 of its two macOS archives, as that release's `SHA256SUMS` lists them, and the sha256 of the residue binary inside each. `scripts/sidecar.sh` places it where Tauri's `externalBin` takes it, `src-tauri/binaries/residue-cli-<target>`, and `tauri dev` and `tauri build` run that script first. Tauri copies the binary into the bundle as `Contents/MacOS/residue-cli`, beside the app's own executable, `residue`. Nothing in `src-tauri/binaries/` is committed: every mode of the script fails when git tracks a file there.
 
-- `sh scripts/sidecar.sh` downloads the two archives, checks each one's sha256 against the lock and, when gh is logged in, its build-provenance attestation, and joins the two binaries with `lipo` into `residue-cli-universal-apple-darwin`. A release already placed is kept, so the next run downloads nothing. Without gh, it says that it did not check the attestation.
-- `sh scripts/sidecar.sh --require-attestation` fails when gh cannot check the attestation. CI and the release run it.
-- `sh scripts/sidecar.sh --check` changes nothing, and fails unless the pinned release is placed, with its attestation checked, and unchanged since. `scripts/check-app.sh` runs it.
+- `sh scripts/sidecar.sh` downloads the two archives, checks each one's sha256 against the lock and, when gh is logged in, its build-provenance attestation, checks each binary inside against the lock, and joins the two with `lipo` into `residue-cli-universal-apple-darwin`. A release already placed is kept while its binaries are the ones the lock pins, so the next run downloads nothing. Without gh, it says that it did not check the attestation.
+- `sh scripts/sidecar.sh --require-attestation` downloads and checks again, whatever is placed, and fails when gh cannot check the attestation. CI and the release run it.
+- `sh scripts/sidecar.sh --check` changes nothing, and fails unless the pinned release is placed with its attestation checked and every binary is the one the lock pins. `scripts/check-app.sh` runs it.
 
 Releases up to 0.0.10 were built before residue-cli was renamed, so their attestations name `whiteheap/residue`. `attested_as` in `sidecar.lock` names the repository to check.
 
-To move to another release, set `version`, `attested_as` and both checksums in `sidecar.lock`, read that release's entry in [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md), and update what the app says about residue's behavior in the same pull request ([AGENTS.md](AGENTS.md#invariants)).
+To move to another release, set `version`, `attested_as` and the four checksums in `sidecar.lock` (`sh scripts/sidecar.sh --require-attestation` prints each binary's once its archive checks out), read that release's entry in [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md), and update what the app says about residue's behavior in the same pull request ([AGENTS.md](AGENTS.md#invariants)).
 
 ### A residue from your checkout
 
