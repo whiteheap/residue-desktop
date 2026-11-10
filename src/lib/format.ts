@@ -55,9 +55,81 @@ export function tilde(path: string, home: string | undefined): string {
   return path.startsWith(`${h}/`) ? `~${path.slice(h.length)}` : path;
 }
 
-/** `s` as one shell word: bare when that is safe, otherwise in single quotes. */
+/**
+ * Characters a terminal or a line editor can act on, or that draw text out
+ * of order: C0 controls, DEL, C1 controls, the line and paragraph
+ * separators, and the bidirectional controls.
+ */
+// oxlint-disable-next-line no-control-regex -- finding them is the point.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+
+/** `c` as its UTF-8 bytes, each written `\xHH`. */
+function hexBytes(c: string): string {
+  return [...new TextEncoder().encode(c)].map((b) => `\\x${b.toString(16).padStart(2, "0")}`).join("");
+}
+
+/**
+ * `s` as one shell word that sh, bash, zsh, ksh and fish read back as `s`:
+ * bare when that is safe; otherwise in single quotes, with each `'` and `\`
+ * written outside them as `\'` and `\\`, since fish reads those two as
+ * escapes inside single quotes and POSIX shells do not. A word that holds a
+ * control character is written `$'…'` with each such character as `\xHH`
+ * bytes, so the text holds none: bash, zsh and ksh read it back as `s`, fish
+ * refuses it, and `commandView` turns its copy off.
+ */
 export function shellWord(s: string): string {
-  return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
+  // zsh expands a word that starts with `=`, fish one that starts with `%`.
+  if (/^[\w@+:,./-][\w@%+=:,./-]*$/.test(s)) return s;
+  if (!CONTROL.test(s)) return `'${s.replace(/['\\]/g, (c) => `'\\${c}'`)}'`;
+  let out = "$'";
+  let escaped = false;
+  for (const c of s) {
+    // ksh takes every hex digit after `\x`, so one right after an escape is escaped too.
+    if (CONTROL.test(c) || (escaped && /[0-9a-f]/i.test(c))) {
+      out += hexBytes(c);
+      escaped = true;
+    } else {
+      out += c === "\\" || c === "'" ? `\\${c}` : c;
+      escaped = false;
+    }
+  }
+  return `${out}'`;
+}
+
+/**
+ * A command to show and copy, from words quoted as `shellWord` and residue's
+ * `shown` quote them. Copy is off when a word is in `$'…'` form, which fish
+ * and dash read differently, and when the text holds a control character
+ * itself, which is then shown as `\xHH`: a terminal can act on one as a key.
+ */
+export function commandView(command: string): { text: string; copyable: boolean } {
+  const text = command.replace(new RegExp(CONTROL.source, "gu"), hexBytes);
+  return { text, copyable: text === command && readsAlike(command) };
+}
+
+/**
+ * Whether every shell reads `command` alike: no word starts with `$'`, and
+ * every single quote closes, reading the quotes as `shellWord` writes them.
+ */
+function readsAlike(command: string): boolean {
+  let start = true;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (c === " ") {
+      start = true;
+      continue;
+    }
+    if (start && c === "$" && command[i + 1] === "'") return false;
+    start = false;
+    if (c === "'") {
+      const end = command.indexOf("'", i + 1);
+      if (end < 0) return false;
+      i = end;
+    } else if (c === "\\") {
+      i += 1;
+    }
+  }
+  return true;
 }
 
 /** `path` relative to `base` when it is inside it, else null. */

@@ -50,6 +50,8 @@ jobs:
         run: pnpm typecheck
       - name: Lint
         run: pnpm lint
+      - name: Tests
+        run: pnpm test
       - name: Build the web assets
         run: pnpm build
       - name: Format
@@ -58,6 +60,9 @@ jobs:
       - name: Clippy
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
       - name: Build the app (universal, ad-hoc signed)
         run: pnpm tauri build --ci --target universal-apple-darwin -- --locked
       - name: Check the bundle

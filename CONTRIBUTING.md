@@ -18,7 +18,7 @@ Open an issue before you start on anything larger than a small fix, so we can ag
 
 ## Set up
 
-You need macOS 13 or later with Xcode's command line tools (`xcode-select --install`), rustup, Node 22.12 or later, and pnpm, the version in `package.json`'s `packageManager`. rustup installs the Rust version in `rust-toolchain.toml`, with both macOS targets, on the first build. With [gh](https://cli.github.com) logged in, the build also checks the bundled residue's build-provenance attestation.
+You need macOS 13 or later with Xcode's command line tools (`xcode-select --install`), rustup, Node 22.18 or later (`pnpm test` runs TypeScript tests directly), and pnpm, the version in `package.json`'s `packageManager`. rustup installs the Rust version in `rust-toolchain.toml`, with both macOS targets, on the first build. With [gh](https://cli.github.com) logged in, the build also checks the bundled residue's build-provenance attestation.
 
 ```sh
 git clone https://github.com/whiteheap/residue-ui
@@ -65,15 +65,16 @@ CI, `.github/workflows/ci.yml`, runs these on every pull request and on `main`, 
 sh scripts/sidecar.sh --require-attestation
 pnpm typecheck
 pnpm lint
+pnpm test
 pnpm build
-(cd src-tauri && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings)
+(cd src-tauri && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked)
 pnpm tauri build --ci --target universal-apple-darwin -- --locked
 sh scripts/check-app.sh src-tauri/target/universal-apple-darwin/release/bundle/macos/residue.app
 ```
 
 `pnpm build` also fails when the app uses a Phosphor icon weight the build drops, or bundles a Kumo component that `src/styles.css` does not scan (`bundle.ts`). `scripts/check-app.sh` checks the bundle: the identifier `com.whiteheap.residue`, the name `residue`, the version in `tauri.conf.json`, both architectures in the app and in its `residue-cli`, that `residue-cli` is the pinned release by its version (on Apple silicon with Rosetta, the x86_64 slice's too), its attestation check and each architecture's UUID, and the ad-hoc signature. CI keeps the DMG as the run's artifact, `residue-macos-dmg`.
 
-The app has no automated test suite. A change is checked by these commands and by using the app on scratch repositories, as [Verify a change](#verify-a-change) says.
+`pnpm test` runs the unit tests in `tests/` with Node's test runner, and `cargo test` the Rust ones beside the code. A change is also checked by using the app on scratch repositories, as [Verify a change](#verify-a-change) says.
 
 ## Development builds
 

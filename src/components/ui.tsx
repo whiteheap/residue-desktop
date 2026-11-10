@@ -1,6 +1,7 @@
 import { Button } from "@cloudflare/kumo";
 import { Check, Copy, WarningCircle } from "@phosphor-icons/react";
 import { Fragment, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { commandView } from "../lib/format";
 import type { CliError, Verdict } from "../lib/types";
 import { verdictHelp, verdictLabel } from "../lib/worktree";
 
@@ -188,12 +189,18 @@ export function Loading({ title, detail }: { title: string; detail?: ReactNode }
   );
 }
 
-/** A command the user can copy and run in a terminal. */
-export function Command({ text, label }: { text: string; label?: string }) {
+/**
+ * A command the user can copy and run in a terminal. Shown and copied as
+ * `commandView` gives it: a control character is never shown or copied as
+ * itself, and copy is off for a command that shells read differently.
+ */
+export function Command({ text: command, label }: { text: string; label?: string }) {
+  const { text, copyable } = commandView(command);
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const copy = async () => {
+    if (!copyable) return;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -205,18 +212,24 @@ export function Command({ text, label }: { text: string; label?: string }) {
     }
   };
   return (
-    <div className="command">
-      <code>{text}</code>
-      <Button
-        variant="ghost"
-        size="sm"
-        shape="square"
-        icon={copied ? <Check /> : <Copy />}
-        aria-label={copied ? "Copied" : `Copy ${label ?? "command"}`}
-        title={copied ? "Copied" : "Copy"}
-        onClick={copy}
-      />
-    </div>
+    <>
+      <div className="command">
+        <code>{text}</code>
+        <Button
+          variant="ghost"
+          size="sm"
+          shape="square"
+          icon={copied ? <Check /> : <Copy />}
+          aria-label={copied ? "Copied" : `Copy ${label ?? "command"}`}
+          title={copied ? "Copied" : copyable ? "Copy" : "Not copyable"}
+          disabled={!copyable}
+          onClick={copy}
+        />
+      </div>
+      {copyable ? null : (
+        <p className="hint">Not copyable: it holds a control character, shown escaped.</p>
+      )}
+    </>
   );
 }
 
