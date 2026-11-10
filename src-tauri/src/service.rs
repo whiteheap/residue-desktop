@@ -501,7 +501,7 @@ pub struct Change {
     pub status: Status,
 }
 
-/// What `residue watch --once --dry-run` decided, which removes nothing.
+/// What `residue watch --once --dry-run` decided, which removes no worktree.
 #[derive(Debug, Clone, Serialize)]
 pub struct Preview {
     pub command: String,
@@ -515,7 +515,8 @@ pub struct Preview {
 /// `residue service install` or `uninstall`: launchd acts on the user's real
 /// session and the label is shared with any residue service already running.
 /// The switch then shows the command it would run and the output of
-/// `residue watch --once --dry-run`, which removes nothing, and remembers the
+/// `residue watch --once --dry-run`, which removes no worktree but fetches
+/// as the service does (`run_preview`), and remembers the
 /// pretend state until the app quits. With `RESIDUE_APP_DEV_AGENT_FILE`
 /// set to a plist as well, the preview reads that file as the installed
 /// service's agent file, on every read, until the switch is used: a change
@@ -1801,7 +1802,7 @@ pub fn uninstall(ctx: &Context, dev: &DevPreview) -> Result<Change, CliError> {
 }
 
 /// What automatic cleanup would remove right now, after a save of `roots`:
-/// the service's next pass with `--dry-run`, which removes nothing.
+/// the service's next pass with `--dry-run`, which removes no worktree.
 pub fn preview(ctx: &Context, dev: &DevPreview, roots: &[PathBuf]) -> Result<Preview, CliError> {
     let (current, installer) = read(ctx, dev)?;
     run_preview(ctx, &installer, roots, &current.plan.keep)
@@ -1809,9 +1810,14 @@ pub fn preview(ctx: &Context, dev: &DevPreview, roots: &[PathBuf]) -> Result<Pre
 
 /// `residue watch --once --dry-run` with every option a save passes on, run
 /// by the binary a save installs with: a pass as the saved service runs it,
-/// which removes nothing. Like the service, it fetches first unless the
-/// options say `--no-fetch` or the binary is older than 0.0.7. A fetch
-/// changes only remote-tracking refs.
+/// which removes no worktree. Like the service, it fetches first, with
+/// `git fetch --prune`, unless the options say `--no-fetch` or the binary is
+/// older than 0.0.7. Up to residue 0.0.13 that fetch prunes every
+/// destination of a remote's fetch refspecs, and every tag under
+/// `pruneTags`, so it also deletes a tag, note or other ref they cover that
+/// the remote does not have, even one never pushed; later releases change
+/// only remote-tracking refs. The window
+/// says so beside the fetch (`fetchCaveat` in `src/lib/watch.ts`).
 fn run_preview(
     ctx: &Context,
     installer: &Installer,

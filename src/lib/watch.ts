@@ -3,7 +3,7 @@
 // here assumes a value: an option the service does not set arrives as
 // residue's default, marked as one.
 
-import { plural } from "./format";
+import { plural } from "./format.ts";
 import type { WatchFetch, WatchSettings } from "./types";
 
 const UNITS: Record<string, string> = { m: "minute", h: "hour", d: "day", w: "week" };
@@ -38,17 +38,54 @@ export function diskLow(settings: WatchSettings): { below: string; until: string
   return { below: `${p}%`, until: `${p + 5}%` };
 }
 
-/** How watch learns that a branch was deleted on the remote. */
+/**
+ * The last residue whose `watch` fetch can delete a ref other than the
+ * remote's own remote-tracking refs. Its `git fetch --prune` prunes every
+ * destination of the remote's fetch refspecs, and every tag under
+ * `pruneTags`: a tag, note or other ref they cover that the remote does not
+ * have goes, even one that was never pushed, and a refspec into another
+ * remote's refs prunes that remote's. The next release gives Git only the
+ * refspecs that store under `refs/remotes/`.
+ */
+export const FETCH_PRUNES_LOCAL_UNTIL = "0.0.13";
+
+/** `residue 0.0.12` -> [0, 0, 12], as `service.rs` `parse_version` reads it. */
+function versionParts(text: string): [number, number, number] | null {
+  const m = /^residue (\d+)\.(\d+)\.(\d+)(?:[-+.]|$)/.exec(text.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * What a fetch of this residue can delete besides remote-tracking refs, said
+ * beside the fetch; null when the residue is newer than
+ * `FETCH_PRUNES_LOCAL_UNTIL` or does not fetch. An unknown version gets it.
+ */
+export function fetchCaveat(fetch: WatchFetch, version: string | null): string | null {
+  if (fetch.mode === "off" || fetch.mode === "never") return null;
+  const v = version ? versionParts(version) : null;
+  const until = versionParts(`residue ${FETCH_PRUNES_LOCAL_UNTIL}`);
+  const at = v && until ? v.findIndex((part, i) => part !== until[i]) : -1;
+  if (v && until && at >= 0 && v[at]! > until[at]!) return null;
+  return `Up to residue ${FETCH_PRUNES_LOCAL_UNTIL}, its fetch also deletes a tag, note or other ref that a fetch refspec or pruneTags covers and the remote does not have, even one never pushed. Setting --no-fetch from a terminal avoids that.`;
+}
+
+/** How watch learns that a branch was deleted on the remote, and what its fetch can also delete. */
 export function fetchWords(fetch: WatchFetch, version: string | null): string {
+  const caveat = fetchCaveat(fetch, version);
+  const fetched = (text: string) => (caveat ? `${text} ${caveat}` : text);
   switch (fetch.mode) {
     case "every":
-      return `It fetches about every ${duration(fetch.value)}, with --prune, so it sees a branch deleted on the remote without your own fetch.`;
+      return fetched(
+        `It fetches about every ${duration(fetch.value)}, with --prune, so it sees a branch deleted on the remote without your own fetch.`,
+      );
     case "off":
       return "It does not fetch (--no-fetch): it sees a branch deleted on the remote after your next git fetch --prune.";
     case "never":
       return `${version ?? "This residue"} never fetches: it sees a branch deleted on the remote after your next git fetch --prune. residue ${fetch.since} and newer fetch about every ${duration(fetch.every)}, unless --no-fetch.`;
     default:
-      return `Unknown residue version: before ${fetch.since}, residue never fetches, and sees a branch deleted on the remote after your next git fetch --prune. residue ${fetch.since} and newer fetch about every ${duration(fetch.every)}, unless --no-fetch.`;
+      return fetched(
+        `Unknown residue version: before ${fetch.since}, residue never fetches, and sees a branch deleted on the remote after your next git fetch --prune. residue ${fetch.since} and newer fetch about every ${duration(fetch.every)}, unless --no-fetch.`,
+      );
   }
 }
 

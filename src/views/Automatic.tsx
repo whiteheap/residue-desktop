@@ -22,7 +22,7 @@ import type {
 } from "../lib/types";
 import { useCli } from "../lib/useCli";
 import { cleanupLevels, diskMeters, type CleanupLevels, type DiskMeter } from "../lib/viz";
-import { diskLow, duration, fetchWords, settingFlags, settingLines } from "../lib/watch";
+import { diskLow, duration, fetchCaveat, fetchWords, settingFlags, settingLines } from "../lib/watch";
 
 export function Automatic({
   info,
@@ -88,7 +88,8 @@ export function Automatic({
             <h2>Development preview</h2>
             <p>
               RESIDUE_APP_DEV_SERVICE=preview: the switch never installs or uninstalls the service. It
-              shows the command and runs only residue watch --once --dry-run, which removes nothing.
+              shows the command and runs only residue watch --once --dry-run, which removes no worktree
+              and fetches as the service does.
             </p>
           </section>
         ) : null}
@@ -145,7 +146,7 @@ export function Automatic({
                 {program.dry_run ? (
                   <div>
                     <dt>Mode</dt>
-                    <dd>log only (--dry-run): removes nothing</dd>
+                    <dd>log only (--dry-run): removes no worktree</dd>
                   </div>
                 ) : null}
                 {program.options.length > 0 ? (
@@ -321,13 +322,20 @@ function OtherOptions({ options }: { options: string[] }) {
   );
 }
 
-/** Whether the preview fetches, as the service would: before it runs (`done` false) or after. */
-function previewFetch(fetch: WatchFetch, done: boolean): string {
+/**
+ * Whether the preview fetches, as the service would, before it runs (`done`
+ * false) or after, and what that fetch can delete for this `version`.
+ */
+function previewFetch(fetch: WatchFetch, done: boolean, version: string | null): string {
+  const caveat = fetchCaveat(fetch, version);
+  const fetched = (text: string) => (caveat ? `${text} ${caveat}` : text);
   switch (fetch.mode) {
     case "every":
-      return done
-        ? `It fetched first, as the service does about every ${duration(fetch.value)}, so a branch deleted on the remote shows here. A fetch changes only remote-tracking refs.`
-        : "It fetches first, as the service does, which can take a while. A fetch changes only remote-tracking refs.";
+      return fetched(
+        done
+          ? `It fetched first, with --prune, as the service does about every ${duration(fetch.value)}, so a branch deleted on the remote shows here.`
+          : "It fetches first, with --prune, as the service does, which can take a while.",
+      );
     case "off":
       return done
         ? "It did not fetch (--no-fetch), like the service: a branch deleted on the remote shows after your next git fetch --prune."
@@ -335,7 +343,9 @@ function previewFetch(fetch: WatchFetch, done: boolean): string {
     case "never":
       return `A residue older than ${fetch.since} never fetches, so neither ${done ? "did" : "does"} the preview.`;
     default:
-      return `Whether it ${done ? "fetched" : "fetches"} depends on the residue version, which the app could not read.`;
+      return fetched(
+        `Whether it ${done ? "fetched" : "fetches"} depends on the residue version, which the app could not read.`,
+      );
   }
 }
 
@@ -460,7 +470,10 @@ function WhatItRemoves({
           Every check runs first: changes, untracked files, a running process or a lock keep a
           worktree.
         </li>
-        <li>It deletes instead of using the trash. Branches and commits stay.</li>
+        <li>
+          It deletes instead of using the trash, and keeps the worktree's branch and commits
+          {fetchCaveat(settings.fetch, version) ? ", but its fetch can delete a tag, note, branch or other ref, as above." : "."}
+        </li>
         <li>
           Restore recreates what it deleted for at least {duration(settings.keep_removed.value)} (
           {settings.keep_removed.default ? "residue's default " : "the service's "}
@@ -723,7 +736,8 @@ function SaveForm({
         Deletes a worktree when its upstream branch is gone and it is unchanged for{" "}
         {duration(settings.grace.value)}, or when the disk is below {low.below} free and it is
         unchanged for {duration(settings.idle.value)}. It starts now and at every login, runs every
-        check first, and deletes instead of using the trash; branches and commits stay.
+        check first, and deletes instead of using the trash. It keeps the worktree's branch and
+        commits{fetchCaveat(settings.fetch, plan.version) ? ", but its fetch can delete a tag, note, branch or other ref: see Fetching." : "."}
       </Dialog.Description>
 
       <fieldset className="folder-choice">
@@ -743,7 +757,7 @@ function SaveForm({
       </fieldset>
 
       <Checkbox
-        label="Log only, remove nothing (--dry-run)"
+        label="Log only, remove no worktree (--dry-run)"
         checked={dryRun}
         disabled={locked}
         onCheckedChange={(on) => setDryRun(on === true)}
@@ -825,12 +839,12 @@ function SaveForm({
             <pre className="log full" aria-label="Preview">
               {previewed.lines.length > 0 ? previewed.lines.join("\n") : "Nothing to remove now."}
             </pre>
-            <p className="hint">{previewFetch(previewed.fetch, true)}</p>
+            <p className="hint">{previewFetch(previewed.fetch, true, plan.version)}</p>
           </>
         ) : (
           <p className="hint">
             Runs one pass of the service with these settings and <Flags flags={["--dry-run"]} />,
-            so it removes nothing. {previewFetch(settings.fetch, false)}
+            so it removes no worktree. {previewFetch(settings.fetch, false, plan.version)}
           </p>
         )}
       </section>
