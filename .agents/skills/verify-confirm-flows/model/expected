@@ -3,7 +3,7 @@
 # the initial state). Every rule not listed holds. A line goes only when
 # the code it describes changed, with the reason in the same change.
 #
-# No rule breaks. Finding 1, a second confirmed run while the first still
+# Finding 1, a second confirmed run while the first still
 # runs (OneRemovalAtATime in remove/reload and remove/draw), left with the
 # fix for #12: src-tauri holds a confirmed run from before residue starts
 # until it returns and refuses a second one meanwhile, and keeps a marker
@@ -22,3 +22,14 @@
 # and copies only the residue the read named, which each service command
 # reads again. The code before it (NoPutBack, CachedVersion, NoCopyCheck)
 # breaks FailedSaveKeepsTheResidue and SaveIsWhatTheDialogShowed there.
+# Finding 7 is open (SKILL.md, "Findings"): the moment between the app's
+# last check and residue's own read, which only residue-cli can close.
+# remove/during lets the worktree at a path change after src-tauri's plan
+# at the click and before residue's own plan in the confirmed run; both
+# rules break there by the same path. Its other rules hold, and
+# remove/no-faults, which leaves that moment out, holds every rule. A line
+# goes when residue-cli takes what the confirm showed. save/redirect-during
+# adds no line: src-tauri checks the folders right before residue starts,
+# one step with residue's own resolve in the model.
+remove/during OnlyListedWorktreesMove: YouTick YouClickMove PlanLands YouConfirm ReplanLands Replace RunMoves
+remove/during OnlyListedEntriesPurged: YouTick YouClickMove PlanLands YouConfirm ReplanLands Replace RunMoves

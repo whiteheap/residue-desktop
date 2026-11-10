@@ -5,7 +5,9 @@ import type {
   ExplainDocument,
   Listing,
   Removal,
-  RestoreDocument,
+  RemovalConfirm,
+  Restored,
+  SaveFolder,
   ScanDocument,
   ServiceBasis,
   ServiceChange,
@@ -13,6 +15,8 @@ import type {
   ServiceSave,
   ServiceStatus,
   Settings,
+  ShownEntry,
+  ShownRemoval,
   StatsDocument,
 } from "./types";
 
@@ -67,11 +71,11 @@ export const api = {
   explain: (path: string) => call<ExplainDocument>("explain", { path }),
   planRemoval: (paths: string[]) => call<Removal>("plan_removal", { paths }),
   /**
-   * `asOf` is the `generated_at` of the plan the dialog showed: residue
-   * judges every age at that time, so the run purges and forgets only what
-   * the plan could list (#13).
+   * `shown` is what the dialog showed of its plan. src-tauri plans again at
+   * the click, and runs nothing when that plan differs from it; otherwise
+   * residue judges every age at the shown plan's time (#13).
    */
-  removeToTrash: (paths: string[], asOf: string) => call<Removal>("remove_to_trash", { paths, asOf }),
+  removeToTrash: (shown: ShownRemoval) => call<RemovalConfirm>("remove_to_trash", { shown }),
   /**
    * Whether a confirmed removal runs: this window's, or one src-tauri still
    * holds after the window started afresh or the app opened again (#12).
@@ -81,13 +85,15 @@ export const api = {
   /** Settles once no confirmed removal runs. */
   waitForRemoval: () => call<void>("wait_for_removal"),
   listRestorable: (roots: string[]) => call<Listing[]>("list_restorable", { roots }),
-  restore: (entryPath: string, root: string) =>
-    call<RestoreDocument>("restore", { entryPath, root }),
+  /** Restores only while the row's folder is still at its path (`src-tauri/src/entry.rs`). */
+  restore: (root: string, shown: ShownEntry) => call<Restored>("restore", { root, shown }),
   serviceStatus: () => call<ServiceStatus>("service_status"),
   /** `basis` is the one the dialog showed; a fresh read that differs installs nothing. */
   serviceInstall: (roots: string[], dryRun: boolean, basis: ServiceBasis) =>
     change(() => call<ServiceSave>("service_install", { roots, dryRun, basis })),
   serviceUninstall: () => change(() => call<ServiceChange>("service_uninstall")),
   servicePreview: (roots: string[]) => call<ServicePreview>("service_preview", { roots }),
+  /** The automatic cleanup dialog's folders as residue records them: each one's canonical path. */
+  resolveFolders: (roots: string[]) => call<SaveFolder[]>("resolve_folders", { roots }),
   stats: () => call<StatsDocument>("stats"),
 };

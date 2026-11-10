@@ -40,6 +40,8 @@ export const colors = { list: "teal", dialog: "blue", moved: "orange" };
 
 const labels = {
   Change: () => "it changes outside the app",
+  Replace: () => "another worktree takes its path, or it gains a commit",
+  Release: () => "an old trash entry is no longer in use",
   YouTick: () => "you tick it",
   YouOpenChecks: () => "you open its checks",
   ChecksLand: () => "its checks load",
@@ -51,6 +53,8 @@ const labels = {
   PlanLands: () => "residue lists what it would move",
   PlanFails: () => "the plan fails",
   YouConfirm: () => "you confirm",
+  ReplanLands: () => "the app plans again: the same, or nothing runs and it plans anew",
+  ReplanFails: () => "the plan at the click fails: nothing runs",
   RunMoves: () => "residue moves what can still go",
   RunLands: () => "residue reports what moved",
   RunFails: () => "the run fails",

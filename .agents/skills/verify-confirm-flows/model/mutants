@@ -20,6 +20,14 @@ NoRunGuard                     remove/reload     OneRemovalAtATime
 NoMarker                       remove/reload     OneRemovalAtATime
 ConfirmWhileBusy               remove/draw       OneRemovalAtATime
 ConfirmWhileBusy               remove/reload     OneRemovalAtATime
+# The plan at the click (ReplanLands) backs the dialog's list of every
+# expired trash entry: it refuses a run whose plan covers an entry the
+# dialog did not send back.
+NoReplan                       remove/no-faults  OnlyListedWorktreesMove
+NoReplan                       remove/no-faults  OnlyListedEntriesPurged
+ReplanVerdictOnly              remove/no-faults  OnlyListedWorktreesMove
+ReplanNoEntries+ReplanVerdictOnly remove/no-faults OnlyListedEntriesPurged
+ListsOnlySkipped+ReplanNoEntries remove/no-faults OnlyListedEntriesPurged
 # SaveFlow.tla. --expect (NoExpect) backs install's own read: residue
 # compares again right before it writes, so the guards of that read keep
 # their rules only once NoExpect is gone too.
@@ -45,3 +53,5 @@ NoChangeGuard+NoExpect         save/reload       ReplacesOnlyWhatItShowed
 NoPutBack                      save/copy         FailedSaveKeepsTheResidue
 CachedVersion+NoCopyCheck      save/copy         SaveIsWhatTheDialogShowed
 NoCopyCheck+NoExpect           save/copy         SaveIsWhatTheDialogShowed
+NoFolderBinding                save/redirect     SaveIsWhatTheDialogShowed
+NoFolderBinding                save/redirect     PreviewIsOfTheTickedFolders

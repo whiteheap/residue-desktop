@@ -7,7 +7,7 @@ import { Meter } from "../components/viz/Meter";
 import { api, asCliError } from "../lib/api";
 import { ageOf, baseName, bytes, plural, shortBranch, shortHead, tilde } from "../lib/format";
 import { removedBy, sized } from "../lib/records";
-import type { CliError, Listing, Restorable, RestoreDocument } from "../lib/types";
+import type { CliError, Listing, Restorable, RestoreDocument, ShownEntry } from "../lib/types";
 import { documentTime, useCli } from "../lib/useCli";
 import { type TrashAge, trashAge, trashTotals } from "../lib/viz";
 import { duration, durationSeconds } from "../lib/watch";
@@ -27,8 +27,10 @@ function restorables(listings: Listing[]): Restorable[] {
         entryPath: t.entry_path,
         originalPath: t.original_path,
         branch: t.branch,
+        head: t.head,
         at: t.trashed_at,
         error: t.error,
+        folder: l.folders[t.entry_path] ?? null,
         bytes: t.reclaimable_bytes,
         registered: t.registered,
       });
@@ -43,8 +45,10 @@ function restorables(listings: Listing[]): Restorable[] {
         entryPath: r.entry_path,
         originalPath: r.original_path,
         branch: r.branch,
+        head: r.head,
         at: r.removed_at,
         error: r.error,
+        folder: l.folders[r.entry_path] ?? null,
         state: r.state,
         reason: r.reason,
         freed: r.allocated_bytes,
@@ -58,6 +62,24 @@ function restorables(listings: Listing[]): Restorable[] {
     }
   }
   return out.toSorted((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+}
+
+/**
+ * What a Restore click sends back: the row as the listing gave it, and its
+ * folder. src-tauri restores only while that folder is at the row's path, and
+ * compares residue's answer with the row (`src-tauri/src/entry.rs`).
+ */
+function shownEntry(item: Restorable): ShownEntry {
+  return {
+    kind: item.kind,
+    entry: item.name,
+    entry_path: item.entryPath,
+    original_path: item.originalPath,
+    branch: item.branch,
+    head: item.head,
+    at: item.at,
+    folder: item.folder,
+  };
 }
 
 /** The line under a removal record, before the click: what restore does and does not bring back. */
@@ -176,14 +198,20 @@ export function Restore({
   const loading = q.loading;
   const load = q.reload;
   const [working, setWorking] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<{ ok: boolean; lines: string[]; error?: CliError } | null>(null);
+  const [outcome, setOutcome] = useState<{
+    ok: boolean;
+    lines: string[];
+    error?: CliError;
+    /** How residue's answer differs from the row clicked, one line each. */
+    unlike?: string[];
+  } | null>(null);
 
   const restore = async (item: Restorable) => {
     setWorking(item.entryPath);
     setOutcome(null);
     try {
-      const doc = await api.restore(item.entryPath, item.root);
-      setOutcome({ ok: true, lines: restoredText(doc, item, home) });
+      const { document, unlike } = await api.restore(item.root, shownEntry(item));
+      setOutcome({ ok: true, lines: restoredText(document, item, home), unlike });
     } catch (e) {
       setOutcome({ ok: false, lines: [`Could not restore ${item.name}`], error: asCliError(e) });
     } finally {
@@ -237,7 +265,22 @@ export function Restore({
       />
       <div className="page-body">
         {outcome ? (
-          outcome.ok ? (
+          outcome.ok && outcome.unlike && outcome.unlike.length > 0 ? (
+            <section className="notice" role="alert">
+              <h2>
+                <span className="warn">residue restored a different entry</span>
+              </h2>
+              {outcome.lines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+              <p>Check that worktree, and move it to the trash again if you did not want it back.</p>
+              <ul>
+                {outcome.unlike.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </section>
+          ) : outcome.ok ? (
             <output className="notice">
               {outcome.lines.map((line) => (
                 <p key={line}>{line}</p>

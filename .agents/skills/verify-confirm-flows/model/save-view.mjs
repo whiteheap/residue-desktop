@@ -68,6 +68,7 @@ const labels = {
   TerminalAddsArgument: () => "a terminal adds an argument",
   BrewUpgrade: () => "brew upgrades residue",
   AppReplaced: () => "a new app is put in place of this one",
+  Redirect: () => "a folder's path comes to lead to another folder",
 };
 
 export const step = (action, from) => (labels[action] ? labels[action](from) : null);

@@ -9,13 +9,17 @@
 mod cli;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod devshot;
+mod entry;
 mod env;
+mod folder;
+mod plan;
 mod removal;
 mod service;
 mod settings;
 
 use cli::{CliError, Document, ErrorKind, Run};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -237,20 +241,25 @@ async fn explain(state: AppState<'_>, path: String) -> Result<Document, CliError
 struct Removal {
     document: Document,
     exit_code: Option<i32>,
+    /// For a plan: `folder::id` of each worktree's folder, read right after
+    /// residue planned, by the path it was asked about. The dialog sends it
+    /// back with what it showed (`plan::Worktree::folder`).
+    folders: BTreeMap<String, String>,
 }
 
-/// The `generated_at` of the plan a confirm runs, passed as `--as-of` (#13).
-/// residue then measures every age at that time, so the run purges and
-/// forgets only what the plan could list. Only the form a plan's
-/// `generated_at` has, RFC 3339 in UTC with whole seconds such as
+/// The time of the plan a confirm runs, passed as `--as-of` (#13): the shown
+/// plan's `as_of`, which is its `generated_at` for a plan made without
+/// `--as-of`. residue then measures every age at that time, so the run
+/// purges and forgets only what the plan could list. Only the form a plan's
+/// time has, RFC 3339 in UTC with whole seconds such as
 /// `2026-11-09T12:00:00Z`: residue also takes a `+HH:MM` offset, which no
 /// plan has. residue checks the date itself, and refuses one that does not
 /// exist with exit status 2, before it acts.
 struct AsOf(String);
 
 impl AsOf {
-    fn of_plan(generated_at: Option<String>) -> Result<AsOf, CliError> {
-        let Some(time) = generated_at else {
+    fn of_plan(as_of: Option<String>) -> Result<AsOf, CliError> {
+        let Some(time) = as_of else {
             return Err(CliError::invalid(
                 "the plan has no time to confirm it at; close and try again",
             ));
@@ -270,75 +279,179 @@ impl AsOf {
     }
 }
 
-/// `residue remove --trash --json PATH...`, and once the user confirmed,
-/// `--yes --as-of TIME` with the time of the plan they saw (`confirmed`).
-/// Without `--yes`, and with stdin that is not a terminal, residue removes
-/// and purges nothing and prints its plan: each path checked again, the
-/// expired trash entries the run would purge and the removal records it
-/// would forget. The confirmation dialog shows that plan. With `--yes`,
-/// residue checks every path once more before it moves it, and keeps any
-/// that changed; with `--as-of`, it judges every age at the plan's time.
-///
-/// One confirmed removal runs at a time (#12): it holds `s.removals` from
-/// before residue starts until it returns, and another is refused, with kind
-/// `invalid` and running nothing, while one is in flight, also one an earlier
-/// launch of the app left running (`removal.rs`). A plan is not refused: it
-/// moves nothing, and the window keeps Move to the trash off while a
-/// removal is in flight.
-fn remove(s: &State, paths: &[String], confirmed: Option<AsOf>) -> Result<Removal, CliError> {
+/// Which run of `residue remove --trash --json PATH...`. Only `Confirmed`
+/// adds `--yes`, and never without `--as-of`.
+enum Step<'a> {
+    /// The dialog's plan. Without `--yes`, and with stdin that is not a
+    /// terminal, residue removes and purges nothing and prints its plan: each
+    /// path checked again, the expired trash entries the run would purge and
+    /// the removal records it would forget.
+    Plan,
+    /// The plan again at the click: the confirmed command without `--yes`.
+    Again(&'a AsOf),
+    /// The confirmed run: `--yes --as-of TIME`.
+    Confirmed(&'a AsOf),
+}
+
+/// One run of `residue remove`, and its document. 0: every path went to the
+/// trash. 3: at least one stayed (or, for a plan, nothing was confirmed), and
+/// the document says why. Anything else is an error without a document.
+fn remove(
+    s: &State,
+    paths: &[String],
+    step: Step,
+    started: impl FnOnce(u32),
+) -> Result<(Document, Option<i32>), CliError> {
     if paths.is_empty() {
         return Err(CliError::invalid("no worktrees were selected"));
     }
     let mut args: Vec<OsString> = vec!["remove".into(), "--trash".into(), "--json".into()];
-    if let Some(AsOf(time)) = &confirmed {
-        args.extend(["--yes".into(), "--as-of".into(), time.into()]);
+    match step {
+        Step::Plan => {}
+        Step::Again(AsOf(time)) => args.extend(["--as-of".into(), time.into()]),
+        Step::Confirmed(AsOf(time)) => {
+            args.extend(["--yes".into(), "--as-of".into(), time.into()]);
+        }
     }
     for p in paths {
         args.push(absolute(p)?.into_os_string());
     }
-    let mut removing = if confirmed.is_some() {
-        Some(s.removals.start()?)
-    } else {
-        None
-    };
-    let out = s.run_with(args, &s.home, REMOVE_DEADLINE, |pid| {
-        if let Some(r) = removing.as_mut() {
-            r.record(pid);
-        }
-    })?;
-    drop(removing);
-    // 0: every path went to the trash. 3: at least one stayed (or, for the
-    // plan, nothing was confirmed), and the document says why. Anything else
-    // is an error without a document.
+    let out = s.run_with(args, &s.home, REMOVE_DEADLINE, started)?;
     match out.code {
-        Some(0 | 3) => Ok(Removal {
-            document: out.document("residue.remove/v1")?,
-            exit_code: out.code,
-        }),
+        Some(0 | 3) => Ok((out.document("residue.remove/v1")?, out.code)),
         _ => Err(out.error(ErrorKind::Failed, "residue remove failed".into())),
     }
 }
 
-/// The plan for moving `paths` to the trash. Removes nothing.
-#[tauri::command]
-async fn plan_removal(state: AppState<'_>, paths: Vec<String>) -> Result<Removal, CliError> {
-    blocking(&state, move |s| remove(s, &paths, None)).await
+/// residue's plan document, read for a binding (`plan.rs`).
+fn read_plan(doc: &Document) -> Result<plan::Plan, CliError> {
+    plan::Plan::read(doc.get()).map_err(CliError::bad_output)
 }
 
-/// Move the confirmed `paths` to their repositories' trash, judging ages at
-/// `as_of`, the `generated_at` of the plan the dialog showed (#13). Without
-/// it, or with a value that is not a plan's time, it runs nothing and
-/// returns kind `invalid`.
+/// The plan for moving `paths` to the trash. Removes nothing. A plan is not
+/// refused while a confirmed removal runs: it moves nothing, and the window
+/// keeps Move to the trash off while one is in flight.
 #[tauri::command]
-async fn remove_to_trash(
-    state: AppState<'_>,
-    paths: Vec<String>,
-    as_of: Option<String>,
-) -> Result<Removal, CliError> {
+async fn plan_removal(state: AppState<'_>, paths: Vec<String>) -> Result<Removal, CliError> {
     blocking(&state, move |s| {
-        remove(s, &paths, Some(AsOf::of_plan(as_of)?))
+        let (document, exit_code) = remove(s, &paths, Step::Plan, |_| {})?;
+        let folders = read_plan(&document)?.folders();
+        Ok(Removal {
+            document,
+            exit_code,
+            folders,
+        })
     })
     .await
+}
+
+/// A confirm's outcome.
+#[derive(Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+enum Confirm {
+    /// residue ran the removal. `dropped` names each worktree the dialog
+    /// showed that the run left out because it changed, and `unlisted` what
+    /// the run moved, purged or forgot that the dialog did not show
+    /// (`plan::unlisted`).
+    Ran {
+        document: Document,
+        exit_code: Option<i32>,
+        dropped: Vec<String>,
+        unlisted: Vec<String>,
+    },
+    /// Nothing ran: every worktree changed, or the run would cover a trash
+    /// entry or removal record the dialog did not list. One line per change
+    /// (`plan::check`).
+    Changed { changes: Vec<String> },
+}
+
+/// Move what the dialog showed to the trash (`shown`): its worktrees, judging
+/// ages at its plan's time (#13), and the trash entries and removal records
+/// it listed.
+///
+/// `confirm` checks the plan's time (`AsOf::of_plan`) and holds
+/// `s.removals` from before anything runs until it returns, so another
+/// confirmed removal is refused, with kind `invalid` and running nothing,
+/// while one is in flight, also one an earlier launch of the app left
+/// running (#12, `removal.rs`).
+///
+/// Then it plans again, with the confirmed command without `--yes`
+/// (`plan::check`). A worktree that is not the one the dialog showed, or
+/// that residue would no longer move, is left out. The rest are planned
+/// again on their own, since the run covers the trash of their repositories
+/// only, and run when that plan is the one shown; a trash entry or removal
+/// record the dialog did not list there runs nothing. The run is
+/// the command with `--yes`, where residue checks every path once more
+/// against the plan that run makes, and keeps any that changed. A change in
+/// the moment between the last plan and the run's own goes unseen until the
+/// run reports it (`unlisted`).
+fn confirm(s: &State, shown: &plan::Shown) -> Result<Confirm, CliError> {
+    let as_of = AsOf::of_plan(shown.as_of.clone())?;
+    let paths: Vec<String> = shown.worktrees.iter().map(|w| w.path.clone()).collect();
+    if paths.is_empty() {
+        return Err(CliError::invalid("no worktrees were selected"));
+    }
+    for p in &paths {
+        absolute(p)?;
+    }
+    let mut removing = s.removals.start()?;
+    // A plan moves nothing, so when it fails the removal did not start.
+    let plan_again = |paths: &[String]| {
+        remove(s, paths, Step::Again(&as_of), |_| {})
+            .and_then(|(again, _)| read_plan(&again))
+            .map(|fresh| plan::check(shown, paths, &fresh, &fresh.folders(), &s.home))
+            .map_err(|e| CliError {
+                kind: ErrorKind::Invalid,
+                message: format!("residue could not check the plan again: {}", e.message),
+                ..e
+            })
+    };
+    let first = plan_again(&paths)?;
+    let (run, dropped) = if first.same() {
+        (paths, Vec::new())
+    } else if first.keep.is_empty() {
+        return Ok(Confirm::Changed {
+            changes: first.dropped.into_iter().chain(first.entries).collect(),
+        });
+    } else {
+        let rest = plan_again(&first.keep)?;
+        if !rest.same() {
+            return Ok(Confirm::Changed {
+                changes: first
+                    .dropped
+                    .into_iter()
+                    .chain(rest.dropped)
+                    .chain(rest.entries)
+                    .collect(),
+            });
+        }
+        (first.keep, first.dropped)
+    };
+    let (document, exit_code) = remove(s, &run, Step::Confirmed(&as_of), |pid| {
+        removing.record(pid);
+    })?;
+    drop(removing);
+    let unlisted = match read_plan(&document) {
+        Ok(ran) => plan::unlisted(shown, &ran, &s.home),
+        Err(e) => vec![format!(
+            "The app could not compare the run with the plan: {}",
+            e.message
+        )],
+    };
+    Ok(Confirm::Ran {
+        document,
+        exit_code,
+        dropped,
+        unlisted,
+    })
+}
+
+/// Move to the trash what the dialog showed (`confirm`). Without a plan's
+/// time, or with a value that is not one, it runs nothing and returns kind
+/// `invalid`.
+#[tauri::command]
+async fn remove_to_trash(state: AppState<'_>, shown: plan::Shown) -> Result<Confirm, CliError> {
+    blocking(&state, move |s| confirm(s, &shown)).await
 }
 
 /// Whether a confirmed removal is in flight, this app's or one an earlier
@@ -366,6 +479,10 @@ struct Listing {
     root: String,
     document: Option<Document>,
     error: Option<CliError>,
+    /// `folder::id` of each entry the document lists, by its `entry_path`,
+    /// read right after residue listed it. A Restore click sends its row's
+    /// back (`entry::Shown::folder`).
+    folders: BTreeMap<String, String>,
 }
 
 /// `residue restore --json` in each folder: the trash of the repositories at
@@ -375,60 +492,82 @@ async fn list_restorable(
     state: AppState<'_>,
     roots: Vec<String>,
 ) -> Result<Vec<Listing>, CliError> {
-    blocking(&state, move |s| {
-        let roots = settings::folders(&roots)?;
-        Ok(roots
-            .into_iter()
-            .map(|root| {
-                let result = s
-                    .run(
-                        vec!["restore".into(), "--json".into()],
-                        &root,
-                        RESTORE_DEADLINE,
-                    )
-                    .and_then(|out| out.document("residue.restore/v1"));
-                let root = root.to_string_lossy().into_owned();
-                match result {
-                    Ok(doc) => Listing {
-                        root,
-                        document: Some(doc),
-                        error: None,
-                    },
-                    Err(e) => Listing {
-                        root,
-                        document: None,
-                        error: Some(e),
-                    },
-                }
-            })
-            .collect())
-    })
-    .await
+    blocking(&state, move |s| list(s, &roots)).await
 }
 
-/// `residue restore --json ENTRY_PATH`, run in the folder that listed it.
+fn list(s: &State, roots: &[String]) -> Result<Vec<Listing>, CliError> {
+    let roots = settings::folders(roots)?;
+    Ok(roots
+        .into_iter()
+        .map(|root| {
+            let result = s
+                .run(
+                    vec!["restore".into(), "--json".into()],
+                    &root,
+                    RESTORE_DEADLINE,
+                )
+                .and_then(|out| out.document("residue.restore/v1"))
+                .and_then(|doc| {
+                    let folders = entry::folders(doc.get()).map_err(CliError::bad_output)?;
+                    Ok((doc, folders))
+                });
+            let root = root.to_string_lossy().into_owned();
+            match result {
+                Ok((doc, folders)) => Listing {
+                    root,
+                    document: Some(doc),
+                    error: None,
+                    folders,
+                },
+                Err(e) => Listing {
+                    root,
+                    document: None,
+                    error: Some(e),
+                    folders: BTreeMap::new(),
+                },
+            }
+        })
+        .collect())
+}
+
+#[derive(Serialize)]
+struct Restored {
+    document: Document,
+    /// How residue's answer differs from the row the click showed, one line
+    /// each (`entry::unlike`). Empty: it restored that row's entry.
+    unlike: Vec<String>,
+}
+
+/// `residue restore --json ENTRY_PATH` for the row the click showed
+/// (`shown`), run in the folder that listed it. When the folder at
+/// `entry_path` is not the one the listing read (`entry::check`), it runs
+/// nothing and returns kind `invalid`.
 #[tauri::command]
 async fn restore(
     state: AppState<'_>,
-    entry_path: String,
     root: String,
-) -> Result<Document, CliError> {
-    blocking(&state, move |s| {
-        let entry = absolute(&entry_path)?;
-        let root = settings::folders(&[root])?
-            .pop()
-            .ok_or_else(|| CliError::invalid("no folder to restore from"))?;
-        let out = s.run(
-            vec!["restore".into(), "--json".into(), entry.into_os_string()],
-            &root,
-            RESTORE_DEADLINE,
-        )?;
-        if out.code != Some(0) {
-            return Err(out.error(ErrorKind::Failed, "residue could not restore it".into()));
-        }
-        out.document("residue.restore/v1")
-    })
-    .await
+    shown: entry::Shown,
+) -> Result<Restored, CliError> {
+    blocking(&state, move |s| restore_entry(s, &root, &shown)).await
+}
+
+fn restore_entry(s: &State, root: &str, shown: &entry::Shown) -> Result<Restored, CliError> {
+    let path = absolute(&shown.entry_path)?;
+    let root = settings::folders(&[root.to_string()])?
+        .pop()
+        .ok_or_else(|| CliError::invalid("no folder to restore from"))?;
+    entry::check(shown, &s.home).map_err(CliError::invalid)?;
+    let out = s.run(
+        vec!["restore".into(), "--json".into(), path.into_os_string()],
+        &root,
+        RESTORE_DEADLINE,
+    )?;
+    if out.code != Some(0) {
+        return Err(out.error(ErrorKind::Failed, "residue could not restore it".into()));
+    }
+    let document = out.document("residue.restore/v1")?;
+    let unlike = entry::unlike(shown, document.get(), &s.home);
+    Ok(Restored { document, unlike })
 }
 
 /// `residue stats --json`: what residue has freed on this machine, from its
@@ -456,9 +595,14 @@ async fn service_status(state: AppState<'_>) -> Result<service::Status, CliError
     .await
 }
 
-/// Turn the service on, or save other folders. `basis` is the one the window
-/// showed (`Status.basis`); when a fresh read differs, nothing is installed
-/// and the result is `changed`, with what changed and the fresh status.
+/// Turn the service on, or save other folders. `roots` are the folders the
+/// dialog showed, each its canonical path (`resolve_folders`); `install`
+/// refuses one that leads elsewhere right before residue runs
+/// (`settings::bound_folders`), and names any the service records
+/// differently after the save (`Change::unlike`).
+/// `basis` is the one the window showed (`Status.basis`); when a fresh read
+/// differs, nothing is installed and the result is `changed`, with what
+/// changed and the fresh status.
 #[tauri::command]
 async fn service_install(
     state: AppState<'_>,
@@ -487,7 +631,9 @@ async fn service_uninstall(state: AppState<'_>) -> Result<service::Change, CliEr
 /// `residue watch --once --dry-run ROOT...` with every option a save keeps,
 /// run by the binary a save installs with: what automatic cleanup would
 /// remove now, fetching first as the service does. It removes no worktree;
-/// its fetch is the service's (`service::run_preview`).
+/// its fetch is the service's (`service::run_preview`). Its folders are
+/// checked right before residue runs, as a save's are
+/// (`settings::bound_folders`).
 #[tauri::command]
 async fn service_preview(
     state: AppState<'_>,
@@ -499,6 +645,17 @@ async fn service_preview(
         service::preview(&s.service_context(&version), &s.dev, &roots)
     })
     .await
+}
+
+/// The folders the automatic cleanup dialog offers, as residue records them
+/// (`settings::resolve`): the dialog shows and sends each one's canonical
+/// path.
+#[tauri::command]
+async fn resolve_folders(
+    state: AppState<'_>,
+    roots: Vec<String>,
+) -> Result<Vec<settings::Folder>, CliError> {
+    blocking(&state, move |_| Ok(settings::resolve(&roots))).await
 }
 
 fn absolute(path: &str) -> Result<PathBuf, CliError> {
@@ -605,6 +762,7 @@ pub fn run() {
             service_install,
             service_uninstall,
             service_preview,
+            resolve_folders,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

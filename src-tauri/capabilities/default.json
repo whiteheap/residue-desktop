@@ -23,6 +23,7 @@
     "allow-service-status",
     "allow-service-install",
     "allow-service-uninstall",
-    "allow-service-preview"
+    "allow-service-preview",
+    "allow-resolve-folders"
   ]
 }

@@ -34,6 +34,8 @@
 //! after `install`'s own read is refused too, with nothing written (#11).
 
 use crate::cli::{CliError, ErrorKind, Run, shown};
+use crate::env::tilde;
+use crate::settings;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -499,6 +501,10 @@ pub struct Change {
     pub output: Vec<String>,
     pub dev_dry_run: bool,
     pub status: Status,
+    /// After a save: how the folders the service records differ from those
+    /// the save sent, one line each (`recorded`). Empty when they are the
+    /// same, and for a turn-off.
+    pub unlike: Vec<String>,
 }
 
 /// What `residue watch --once --dry-run` decided, which removes no worktree.
@@ -1640,6 +1646,7 @@ pub fn install(
     let command = shown(&installer.bin, &args);
 
     if dev.enabled {
+        settings::bound_folders(roots, ctx.home)?;
         let preview = run_preview(ctx, &installer, roots, &options)?;
         let settings = watch_settings(&options, installer.version.as_deref());
         let program = Program {
@@ -1664,6 +1671,7 @@ pub fn install(
                 output: preview.lines,
                 dev_dry_run: true,
                 status: status(ctx, dev)?,
+                unlike: Vec::new(),
             },
         });
     }
@@ -1697,6 +1705,14 @@ pub fn install(
     } else {
         None
     };
+    // Right before residue starts, which resolves each folder and records
+    // the one it reaches: a folder that leads elsewhere now runs nothing.
+    if let Err(e) = settings::bound_folders(roots, ctx.home) {
+        return Err(match previous.map(Previous::restore) {
+            Some(Err(undo)) => CliError::failed(format!("{}; {undo}", e.message)),
+            _ => e,
+        });
+    }
     let out = Run {
         bin: &installer.bin,
         args,
@@ -1756,14 +1772,43 @@ pub fn install(
             },
         ));
     }
+    let status = status(ctx, dev)?;
+    let unlike = recorded(roots, &status, ctx.home);
     Ok(Save::Saved {
         change: Change {
             command: out.command.clone(),
             output: out.stdout.lines().map(str::to_string).collect(),
             dev_dry_run: false,
-            status: status(ctx, dev)?,
+            status,
+            unlike,
         },
     })
+}
+
+/// How the folders the service records after a save differ from `roots`,
+/// the ones the save sent, one line each: residue resolves each one as it
+/// starts and records the folder it reaches.
+fn recorded(roots: &[PathBuf], status: &Status, home: &Path) -> Vec<String> {
+    let shown = |p: &str| tilde(p, home);
+    let sent: Vec<String> = roots
+        .iter()
+        .map(|r| r.to_string_lossy().into_owned())
+        .collect();
+    let Some(program) = status.program.as_ref().filter(|_| status.installed) else {
+        return vec!["The service is not running after the save; refresh to see it.".into()];
+    };
+    let mut out: Vec<String> = sent
+        .iter()
+        .filter(|r| !program.roots.contains(r))
+        .map(|r| format!("{}: sent, but the service does not watch it", shown(r)))
+        .collect();
+    out.extend(program.roots.iter().filter(|r| !sent.contains(r)).map(|r| {
+        format!(
+            "{}: the service watches it, but the save did not send it",
+            shown(r)
+        )
+    }));
+    out
 }
 
 /// Refused while another install or uninstall runs.
@@ -1777,6 +1822,7 @@ pub fn uninstall(ctx: &Context, dev: &DevPreview) -> Result<Change, CliError> {
             output: vec!["development preview: nothing was uninstalled".into()],
             dev_dry_run: true,
             status: status(ctx, dev)?,
+            unlike: Vec::new(),
         });
     }
     let out = Run {
@@ -1798,6 +1844,7 @@ pub fn uninstall(ctx: &Context, dev: &DevPreview) -> Result<Change, CliError> {
         output: out.stdout.lines().map(str::to_string).collect(),
         dev_dry_run: false,
         status: status(ctx, dev)?,
+        unlike: Vec::new(),
     })
 }
 
@@ -1805,6 +1852,8 @@ pub fn uninstall(ctx: &Context, dev: &DevPreview) -> Result<Change, CliError> {
 /// the service's next pass with `--dry-run`, which removes no worktree.
 pub fn preview(ctx: &Context, dev: &DevPreview, roots: &[PathBuf]) -> Result<Preview, CliError> {
     let (current, installer) = read(ctx, dev)?;
+    // Right before residue starts: a folder that leads elsewhere runs nothing.
+    settings::bound_folders(roots, ctx.home)?;
     run_preview(ctx, &installer, roots, &current.plan.keep)
 }
 
@@ -1983,6 +2032,78 @@ esac"#
                 &seen,
             )
         }
+    }
+
+    #[test]
+    fn a_folder_that_leads_elsewhere_at_the_save_runs_nothing_and_puts_back_the_copy() {
+        let m = Machine::new("leads", BUNDLED, "exit 0");
+        script(&m.copy(), &residue("900.0.0", "exit 0"));
+        let before = std::fs::metadata(m.copy()).unwrap().ino();
+        // The dialog showed ~/mono/wt; a pull turned it into a link since.
+        std::fs::create_dir_all(m.home.0.join("Other")).unwrap();
+        std::fs::create_dir_all(m.home.0.join("mono")).unwrap();
+        symlink("../Other", m.home.0.join("mono/wt")).unwrap();
+        let ctx = m.ctx(BUNDLED);
+        let seen = status(&ctx, &m.dev).unwrap().basis;
+
+        let err = install(&ctx, &m.dev, &[m.home.0.join("mono/wt")], true, &seen).unwrap_err();
+
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert_eq!(
+            err.message,
+            "~/mono/wt now leads to ~/Other. Close this dialog and open it again to see it."
+        );
+        assert_eq!(m.installs(), "", "residue never ran");
+        assert_eq!(std::fs::metadata(m.copy()).unwrap().ino(), before);
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+        // A Preview is refused the same way, before residue runs.
+        let err = preview(&ctx, &m.dev, &[m.home.0.join("mono/wt")]).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid);
+    }
+
+    #[test]
+    fn a_save_names_each_folder_the_service_records_otherwise() {
+        let home = Path::new("/Users/me");
+        let mut status = m_status(vec!["/Users/me/Other".into(), "/Users/me/src".into()]);
+        let sent = [
+            PathBuf::from("/Users/me/mono/wt"),
+            PathBuf::from("/Users/me/src"),
+        ];
+        assert_eq!(
+            recorded(&sent, &status, home),
+            [
+                "~/mono/wt: sent, but the service does not watch it",
+                "~/Other: the service watches it, but the save did not send it",
+            ]
+        );
+        status.program.as_mut().unwrap().roots =
+            vec!["/Users/me/mono/wt".into(), "/Users/me/src".into()];
+        assert_eq!(recorded(&sent, &status, home), Vec::<String>::new());
+        status.installed = false;
+        assert_eq!(
+            recorded(&sent, &status, home),
+            ["The service is not running after the save; refresh to see it."]
+        );
+    }
+
+    /// A service that runs and watches `roots`.
+    fn m_status(roots: Vec<String>) -> Status {
+        let m = Machine::new("status", BUNDLED, "exit 0");
+        let mut status = status(&m.ctx(BUNDLED), &m.dev).unwrap();
+        status.installed = true;
+        status.program = Some(Program {
+            binary: "/opt/homebrew/bin/residue".into(),
+            binary_exists: true,
+            version: Some("0.0.12".into()),
+            managed: false,
+            roots,
+            options: Vec::new(),
+            other_options: Vec::new(),
+            dry_run: false,
+            unknown: Vec::new(),
+            settings: watch_settings(&[], Some("0.0.12")),
+        });
+        status
     }
 
     // The bundled version in these cases is far above any release, so

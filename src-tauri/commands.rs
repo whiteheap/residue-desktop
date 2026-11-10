@@ -20,4 +20,5 @@ pub const COMMANDS: &[&str] = &[
     "service_install",
     "service_uninstall",
     "service_preview",
+    "resolve_folders",
 ];
