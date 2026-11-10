@@ -1,6 +1,6 @@
 import { Button, Checkbox, Empty, Tabs } from "@cloudflare/kumo";
 import { ArrowClockwise, ArrowsClockwise, CaretRight, FolderPlus, Trash } from "@phosphor-icons/react";
-import { useId, useMemo, type CSSProperties } from "react";
+import { useId, useMemo, useState, type CSSProperties } from "react";
 import { Treemap, type ZoomLevel } from "../components/viz/Treemap";
 import {
   ErrorPanel,
@@ -12,6 +12,7 @@ import {
   Words,
   isPermissionError,
 } from "../components/ui";
+import { asCliError } from "../lib/api";
 import { baseName, bytes, inside, plural, tilde } from "../lib/format";
 import { localTime } from "../lib/freed";
 import type { CliError, FreedSum, InFlight, Repository, ScanDocument, Worktree } from "../lib/types";
@@ -31,6 +32,8 @@ export function Worktrees({
   error,
   scanning,
   roots,
+  unconfirmed,
+  onConfirm,
   home,
   filter,
   onFilter,
@@ -51,6 +54,10 @@ export function Worktrees({
   error: CliError | undefined;
   scanning: boolean;
   roots: string[];
+  /** The usual code folders, offered until the user saves a list; none is scanned before that (`confirmedRoots`). */
+  unconfirmed: string[];
+  /** Save `roots` as the folders to scan, which starts the scan. */
+  onConfirm: (roots: string[]) => Promise<void>;
   home: string | undefined;
   /** The filter and the chart's zoom live in the app, so both outlast a visit to a worktree's checks. */
   filter: Filter;
@@ -116,6 +123,23 @@ export function Worktrees({
       }
     />
   );
+
+  if (roots.length === 0 && unconfirmed.length > 0) {
+    return (
+      <>
+        {header}
+        <div className="page-body">
+          <SinceOpen cleaned={cleaned} onFreed={onFreed} />
+          <ConfirmFolders
+            folders={unconfirmed}
+            home={home}
+            onConfirm={onConfirm}
+            onChooseFolders={onChooseFolders}
+          />
+        </div>
+      </>
+    );
+  }
 
   if (roots.length === 0) {
     return (
@@ -247,6 +271,55 @@ export function Worktrees({
           </div>
         </footer>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * The first launch: the usual code folders, scanned only once the user
+ * confirms them, since a scan runs Git in every repository under them.
+ */
+function ConfirmFolders({
+  folders,
+  home,
+  onConfirm,
+  onChooseFolders,
+}: {
+  folders: string[];
+  home: string | undefined;
+  onConfirm: (roots: string[]) => Promise<void>;
+  onChooseFolders: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<CliError | null>(null);
+  const confirm = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onConfirm(folders);
+    } catch (e) {
+      setError(asCliError(e));
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      {error ? <ErrorPanel title="The folders were not saved" error={error} /> : null}
+      <Empty
+        icon={<FolderPlus size={32} />}
+        title="Scan these folders?"
+        description={`Found in your home folder: ${folders.map((f) => tilde(f, home)).join(", ")}. A scan runs Git in every repository under them, with each repository's own settings.`}
+        contents={
+          <div className="empty-actions">
+            <SolidButton icon={<ArrowClockwise />} loading={saving} disabled={saving} onClick={confirm}>
+              Scan these folders
+            </SolidButton>
+            <Button variant="secondary" icon={<FolderPlus />} disabled={saving} onClick={onChooseFolders}>
+              Choose other folders
+            </Button>
+          </div>
+        }
+      />
     </>
   );
 }

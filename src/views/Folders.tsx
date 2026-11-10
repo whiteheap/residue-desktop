@@ -1,5 +1,5 @@
 import { Button } from "@cloudflare/kumo";
-import { FolderPlus, Plus, X } from "@phosphor-icons/react";
+import { ArrowClockwise, FolderPlus, Plus, X } from "@phosphor-icons/react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { ErrorPanel, PageHeader, SolidButton } from "../components/ui";
@@ -53,9 +53,15 @@ export function Folders({
       <div className="page-body">
         {error ? <ErrorPanel title="The folders were not saved" error={error} /> : null}
         {!settings.saved && settings.roots.length > 0 ? (
-          <p className="notice">
-            Found in your home folder. Add or remove one to save your own list.
-          </p>
+          <div className="notice confirm-folders">
+            <p>
+              Found in your home folder, not scanned yet: a scan runs Git in every repository under
+              them. Adding or removing one saves the list too.
+            </p>
+            <SolidButton icon={<ArrowClockwise />} disabled={saving} onClick={() => save(settings.roots)}>
+              Scan these folders
+            </SolidButton>
+          </div>
         ) : null}
         {settings.roots.length === 0 ? (
           <p className="quiet">No folders yet. Add the ones that hold your code.</p>
