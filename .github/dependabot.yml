@@ -1,0 +1,42 @@
+# Keeps the pinned actions, the crates and the packages current: one grouped
+# pull request a week for each, which CI checks like any other. A release must
+# be a week old before it is proposed, and a major version comes as its own
+# pull request. Security updates are separate and are not delayed.
+#
+# Tauri's crates and its npm packages must agree on their minor version. When
+# an update to one arrives without the other, CI's build fails on it until
+# both are in one pull request.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      crates:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # Reads pnpm-lock.yaml.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      packages:
+        patterns: ["*"]
+        update-types: [minor, patch]
