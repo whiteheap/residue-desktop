@@ -101,7 +101,7 @@ printf '127.0.0.1 localhost %s\n' "$(hostname)" > "$work/hosts"
 # The setups. Each names its model and its constants; model/mutants names
 # them too. Bounds: two worktrees, two dialog openings, two changes outside
 # the app, and at most one fault in a behavior.
-setups="remove/no-faults remove/reload remove/draw save/outside save/during save/reload save/copy"
+setups="remove/no-faults remove/reload remove/draw remove/during save/outside save/during save/reload save/copy save/redirect save/redirect-during"
 
 module_of() {
   case $1 in
@@ -113,7 +113,7 @@ module_of() {
 
 rules_of() {
   case $1 in
-    RemoveFlow) echo "TypeOK OnlyListedWorktreesMove ConfirmSendsTheList OpensOnlyForCanGo ListIsForYourChoice NothingMovedIsTrue OneRemovalAtATime" ;;
+    RemoveFlow) echo "TypeOK OnlyListedWorktreesMove OnlyListedEntriesPurged ConfirmSendsTheList OpensOnlyForCanGo ListIsForYourChoice NothingMovedIsTrue OneRemovalAtATime" ;;
     SaveFlow) echo "TypeOK SaveIsWhatTheDialogShowed ReplacesOnlyWhatItShowed NeverDropsAnArgument FailedSaveKeepsTheResidue WarnedBeforeItDeletes PreviewIsOfTheTickedFolders SaveIsOfTheTickedFolders TheDialogStaysWhileItSaves OneChangeAtATime" ;;
   esac
 }
@@ -121,14 +121,22 @@ rules_of() {
 constants_of() {
   case $1 in
     remove/*)
-      local faults
+      # Another worktree at a path and an expired trash entry in use run in
+      # remove/no-faults and remove/during. A fault drops the window's
+      # replies whatever the worktree is, so the setups with one leave them
+      # out, which keeps each within a minute.
+      local faults replaces=0 inuse=FALSE during=FALSE
       case $1 in
-        remove/no-faults) faults='{}' ;;
+        remove/no-faults) faults='{}'; replaces=1; inuse=TRUE ;;
         remove/reload) faults='{"reload"}' ;;
         remove/draw) faults='{"draw"}' ;;
+        # A worktree at a path can also change between src-tauri's plan at
+        # the click and residue's own plan in the confirmed run.
+        remove/during) faults='{}'; replaces=1; during=TRUE ;;
         *) echo "check.sh: no setup $1" >&2; exit 2 ;;
       esac
-      printf '  %s\n' 'W = {"a", "b"}' "Faults = $faults" 'MaxOpens = 2' 'MaxChanges = 2' ;;
+      printf '  %s\n' 'W = {"a", "b"}' "Faults = $faults" 'MaxOpens = 2' 'MaxChanges = 2' \
+        "MaxReplaces = $replaces" "InUse = $inuse" "DuringRun = $during" ;;
     save/outside)
       printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
         'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' \
@@ -161,6 +169,17 @@ constants_of() {
       # states (6,545,231 distinct), against 247,419 here.
       printf '  %s\n' 'Folders = {"A"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
         'World = {"on", "off", "mode", "app"}' 'DuringSave = TRUE' 'Faults = {}' 'Copy = TRUE' ;;
+    save/redirect)
+      # A folder's path comes to lead to another folder, while no save or
+      # turn-off of the app runs.
+      printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 1' \
+        'World = {"redirect"}' 'DuringSave = FALSE' 'Faults = {}' 'Copy = FALSE' ;;
+    save/redirect-during)
+      # save/redirect, also while a save runs. src-tauri checks the folders
+      # right before residue starts, one step with residue's own resolve of
+      # them here.
+      printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 1' \
+        'World = {"redirect"}' 'DuringSave = TRUE' 'Faults = {}' 'Copy = FALSE' ;;
     *) echo "check.sh: no setup $1" >&2; exit 2 ;;
   esac
 }

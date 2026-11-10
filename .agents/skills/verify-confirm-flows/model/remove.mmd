@@ -23,6 +23,7 @@ stateDiagram-v2
     s9: Moving
     s10: Stopped: scan again to see what moved
     s11: Done: shows what moved
+    s12: Did not start: nothing moved
   }
   [*] --> s1
   [*] --> s2
@@ -34,6 +35,8 @@ stateDiagram-v2
   s8 --> s1: you close it
   s9 --> s10: the run fails
   s9 --> s11: residue reports what moved
+  s9 --> s12: the plan at the click fails: nothing runs
+  s12 --> s1: you close it
   s10 --> s1: you close it
   s10 --> s3: you close it
   s11 --> s3: you close it
@@ -50,3 +53,4 @@ stateDiagram-v2
   class s9 blue
   class s10 blue
   class s11 blue
+  class s12 blue

@@ -5,24 +5,32 @@ import { ErrorPanel, Flags, Loading, SolidButton } from "../components/ui";
 import { api, asCliError } from "../lib/api";
 import { ageOf, baseName, bytes, plural, span, tilde } from "../lib/format";
 import { removalLine } from "../lib/freed";
+import { planLists, shownOf } from "../lib/plan";
 import { removedBy } from "../lib/records";
 import type { CliError, RemoveDocument } from "../lib/types";
 import { documentTime } from "../lib/useCli";
-import { displayPath, keptBy, checkLabel } from "../lib/worktree";
+import { displayPath, keptBy, checkLabel, summary } from "../lib/worktree";
+
+type Folders = Record<string, string>;
 
 type Phase =
   | { step: "planning" }
-  | { step: "plan"; plan: RemoveDocument }
-  | { step: "running"; plan: RemoveDocument }
-  | { step: "done"; result: RemoveDocument }
+  | { step: "plan"; plan: RemoveDocument; folders: Folders }
+  | { step: "running"; plan: RemoveDocument; folders: Folders }
+  | { step: "done"; result: RemoveDocument; dropped: string[]; unlisted: string[] }
   | { step: "error"; error: CliError; plan: RemoveDocument | null };
 
 /**
  * Move worktrees to the trash. First residue's own plan (`residue remove
  * --trash --json PATH...` without --yes, which removes nothing): each worktree
- * checked again, the expired trash entries the run would purge, and the
- * removal records it would forget. The user confirms exactly that list; then
- * the same command with --yes and --as-of the plan's generated_at.
+ * checked again, every expired trash entry the run may purge, and every
+ * removal record it may forget. The user confirms that list, and the confirm
+ * sends it back (`shownOf`). src-tauri plans again at the click, with the
+ * confirmed command without --yes, leaves out a worktree that changed (the
+ * result names it), and runs nothing when the plan covers an entry or record
+ * the dialog did not list; the dialog then plans again and says what
+ * changed. Otherwise it runs the command with --yes and --as-of the shown
+ * plan's time.
  */
 export function RemoveDialog({
   paths,
@@ -39,12 +47,14 @@ export function RemoveDialog({
   onRemoved: (doc: RemoveDocument) => void;
 }) {
   const [phase, setPhase] = useState<Phase>({ step: "planning" });
+  // What changed since the plan before this one, when a confirm found it changed.
+  const [changed, setChanged] = useState<string[] | null>(null);
 
   useEffect(() => {
     let live = true;
     api
       .planRemoval(paths)
-      .then((r) => live && setPhase({ step: "plan", plan: r.document }))
+      .then((r) => live && setPhase({ step: "plan", plan: r.document, folders: r.folders }))
       .catch((e) => live && setPhase({ step: "error", error: asCliError(e), plan: null }));
     return () => {
       live = false;
@@ -53,14 +63,24 @@ export function RemoveDialog({
 
   const busy = phase.step === "planning" || phase.step === "running";
 
-  // The run judges ages at the shown plan's time (#13), so it purges and
-  // forgets only what this plan could list.
-  const confirm = (plan: RemoveDocument, ready: string[]) => {
-    setPhase({ step: "running", plan });
+  const confirm = (plan: RemoveDocument, folders: Folders) => {
+    setPhase({ step: "running", plan, folders });
+    setChanged(null);
     api
-      .removeToTrash(ready, plan.generated_at)
+      .removeToTrash(shownOf(plan, folders))
       .then((r) => {
-        setPhase({ step: "done", result: r.document });
+        if (r.outcome === "changed") {
+          // Nothing ran. Plan the same choice again, and say what changed.
+          // The dialog stays open while it plans (`busy`).
+          setChanged(r.changes);
+          setPhase({ step: "planning" });
+          api
+            .planRemoval(paths)
+            .then((p) => setPhase({ step: "plan", plan: p.document, folders: p.folders }))
+            .catch((e) => setPhase({ step: "error", error: asCliError(e), plan: null }));
+          return;
+        }
+        setPhase({ step: "done", result: r.document, dropped: r.dropped, unlisted: r.unlisted });
         onRemoved(r.document);
       })
       .catch((e) => setPhase({ step: "error", error: asCliError(e), plan }));
@@ -91,13 +111,23 @@ export function RemoveDialog({
           <Plan
             plan={phase.plan}
             home={home}
+            changed={changed}
             running={phase.step === "running"}
             onCancel={onClose}
-            onConfirm={(ready) => confirm(phase.plan, ready)}
+            onConfirm={() => confirm(phase.plan, phase.folders)}
           />
         ) : null}
 
-        {phase.step === "done" ? <Result doc={phase.result} home={home} estimateNote={estimateNote} onClose={onClose} /> : null}
+        {phase.step === "done" ? (
+          <Result
+            doc={phase.result}
+            dropped={phase.dropped}
+            unlisted={phase.unlisted}
+            home={home}
+            estimateNote={estimateNote}
+            onClose={onClose}
+          />
+        ) : null}
 
         {phase.step === "error" ? (
           <>
@@ -126,23 +156,20 @@ export function RemoveDialog({
 function Plan({
   plan,
   home,
+  changed,
   running,
   onCancel,
   onConfirm,
 }: {
   plan: RemoveDocument;
   home: string | undefined;
+  /** What changed since the plan a confirm was refused for, or null. */
+  changed: string[] | null;
   running: boolean;
   onCancel: () => void;
-  onConfirm: (ready: string[]) => void;
+  onConfirm: () => void;
 }) {
-  // Without --yes residue marks each worktree it would move as skipped
-  // (nothing was confirmed) and each one it keeps as refused.
-  const ready = plan.results.filter((r) => r.result === "skipped" && r.worktree?.verdict === "candidate");
-  const kept = plan.results.filter((r) => !ready.includes(r));
-  const purges = plan.purged.filter((p) => p.result === "skipped");
-  // Without --yes, a record the run would forget is skipped too.
-  const forgets = plan.forgotten.filter((f) => f.result === "skipped");
+  const { ready, kept, purges, mayPurge, forgets, mayForget } = planLists(plan);
   const total = ready.reduce((sum, r) => sum + (r.worktree?.size?.reclaimable_bytes ?? 0), 0);
   const now = documentTime(plan.generated_at);
   const recordsKept = span(plan.removal_records.keep_seconds);
@@ -154,6 +181,20 @@ function Plan({
           ? `Branches and commits stay. Restore brings a worktree back whole for at least ${span(plan.trash.keep_seconds)}, then from its removal record, without ignored files, for at least ${recordsKept}.`
           : "residue keeps all of these, so nothing moves."}
       </Dialog.Description>
+
+      {changed ? (
+        <div className="notice" role="alert">
+          <p>
+            <strong className="warn">Nothing moved: the plan changed after it was shown. </strong>
+            Check it as it is now, then confirm again.
+          </p>
+          <ul>
+            {changed.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {ready.length > 0 ? (
         <section className="plan-section">
@@ -218,6 +259,27 @@ function Plan({
         </section>
       ) : null}
 
+      {mayPurge.length > 0 ? (
+        <section className="plan-section">
+          <h3>May be deleted from the trash</h3>
+          <p className="hint">
+            Older than {span(plan.trash.keep_seconds)}, but residue keeps each for now. The run checks each
+            again and deletes it if every check passes then, leaving a removal record.
+          </p>
+          <ul className="plan-list">
+            {mayPurge.map((p) => (
+              <li key={p.entry.entry_path}>
+                <span className="plan-name">{p.entry.entry}</span>
+                <span className="plan-path">
+                  {p.worktree && keptBy(p.worktree).length > 0 ? summary(p.worktree, now ?? 0) : (p.reason ?? p.result)}
+                </span>
+                <span className="num">{bytes(p.entry.reclaimable_bytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {forgets.length > 0 ? (
         <section className="plan-section">
           <h3>Removal records forgotten</h3>
@@ -236,6 +298,24 @@ function Plan({
                   {f.entry.error ??
                     ["removed", ageOf(f.entry.removed_at, now), removedBy(f.entry.reason)].filter(Boolean).join(" ")}
                 </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {mayForget.length > 0 ? (
+        <section className="plan-section">
+          <h3>May be forgotten</h3>
+          <p className="hint">
+            Older than {recordsKept}, but residue keeps each for now. The run looks at each again and forgets
+            it if it can then.
+          </p>
+          <ul className="plan-list">
+            {mayForget.map((f) => (
+              <li key={f.entry.entry_path}>
+                <span className="plan-name">{baseName(f.entry.original_path ?? f.entry.entry)}</span>
+                <span className="plan-path">{f.reason ?? f.result}</span>
               </li>
             ))}
           </ul>
@@ -270,7 +350,7 @@ function Plan({
             icon={<Trash />}
             loading={running}
             disabled={running}
-            onClick={() => onConfirm(ready.map((r) => r.path))}
+            onClick={onConfirm}
           >
             {running ? "Moving…" : `Move ${plural(ready.length, "worktree")} to the trash`}
           </SolidButton>
@@ -291,11 +371,17 @@ const RESULT_TEXT: Record<string, string> = {
 
 function Result({
   doc,
+  dropped,
+  unlisted,
   home,
   estimateNote,
   onClose,
 }: {
   doc: RemoveDocument;
+  /** Each worktree the plan showed that the run left out because it changed, one line each. */
+  dropped: string[];
+  /** What the run moved, purged or forgot that the plan did not show, one line each. */
+  unlisted: string[];
   home: string | undefined;
   estimateNote: string | undefined;
   onClose: () => void;
@@ -353,6 +439,31 @@ function Result({
             <li key={e}>{e}</li>
           ))}
         </ul>
+      ) : null}
+      {dropped.length > 0 ? (
+        <section className="plan-section" role="alert">
+          <h3>Left out: changed since the plan</h3>
+          <p className="hint">These stayed where they are. Scan again to see them as they are now.</p>
+          <ul className="plan-errors">
+            {dropped.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {unlisted.length > 0 ? (
+        <section className="plan-section" role="alert">
+          <h3>Not as the plan showed</h3>
+          <p className="hint">
+            These changed in the moment between the app's last check and residue's run. Restore puts each
+            one back.
+          </p>
+          <ul className="plan-errors">
+            {unlisted.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </section>
       ) : null}
       {doc.warnings.length > 0 ? (
         <section className="plan-section">

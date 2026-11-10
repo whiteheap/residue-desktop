@@ -31,7 +31,8 @@ pub enum ErrorKind {
     Timeout,
     /// It printed something that is not the expected document.
     BadOutput,
-    /// The app refused the request before running anything.
+    /// The app refused the request before it ran anything that changes a
+    /// worktree: it ran nothing, or only a plan, which moves nothing.
     Invalid,
 }
 
@@ -60,6 +61,16 @@ impl CliError {
     pub fn failed(message: impl Into<String>) -> Self {
         CliError {
             kind: ErrorKind::Failed,
+            message: message.into(),
+            command: None,
+            stderr: None,
+            exit_code: None,
+        }
+    }
+
+    pub fn bad_output(message: impl Into<String>) -> Self {
+        CliError {
+            kind: ErrorKind::BadOutput,
             message: message.into(),
             command: None,
             stderr: None,

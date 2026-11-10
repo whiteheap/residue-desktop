@@ -10,6 +10,7 @@ import { baseName, bytes, plural, shellWord, someOf, tilde } from "../lib/format
 import type {
   AppInfo,
   CliError,
+  SaveFolder,
   ScanDocument,
   ServiceChange,
   ServiceJob,
@@ -191,6 +192,19 @@ export function Automatic({
             <h2>{change.dev_dry_run ? "Would run" : "Ran"}</h2>
             <Command text={change.command} />
             {change.output.length > 0 ? <pre className="log">{change.output.join("\n")}</pre> : null}
+            {change.unlike.length > 0 ? (
+              <div className="notice" role="alert">
+                <p>
+                  <strong className="warn">The service watches other folders than the dialog sent. </strong>
+                  Check them, then change the folders again.
+                </p>
+                <ul>
+                  {change.unlike.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </section>
         ) : null}
 
@@ -536,6 +550,25 @@ function sameSet(set: Set<string>, list: string[]): boolean {
   return set.size === other.size && list.every((x) => set.has(x));
 }
 
+/** `list` after `more`, each folder once, by the path residue records. */
+function withFolders(list: SaveFolder[], more: SaveFolder[]): SaveFolder[] {
+  const seen = new Set(list.map((f) => f.path));
+  return [...list, ...more.filter((f) => !seen.has(f.path) && seen.add(f.path))];
+}
+
+/**
+ * The folders a form for `status` starts with, as residue records them
+ * (`resolve_folders`): what it ticks, and those and the suggestions as its
+ * choices. The dialog shows and sends each folder's canonical path, the one
+ * residue acts on, and src-tauri refuses a save or a Preview of one that
+ * leads elsewhere by then.
+ */
+async function startFolders(status: ServiceStatus, appRoots: string[], suggested: string[]) {
+  const chosen = await api.resolveFolders(startFrom(status, appRoots, suggested).roots);
+  const more = await api.resolveFolders(suggested);
+  return { chosen, options: withFolders(chosen, more) };
+}
+
 /**
  * Turn the service on, or save other folders. The dialog plans from its own
  * read of the service, made when it opens, never from the screen's, which can
@@ -561,11 +594,15 @@ function TurnOnDialog({
   /** A save failed: read the service again, since it may have changed. */
   onFailed: () => void;
 }) {
-  // This dialog's own read, made when it opens. A save that finds the service
-  // changed replaces it with the fresh read it returns (`adopted`).
-  const q = useCli("save-dialog", api.serviceStatus);
+  // This dialog's own read, made when it opens, with the folders it starts
+  // from. A save that finds the service changed replaces it with the fresh
+  // read it returns (`adopted`).
+  const q = useCli("save-dialog", async () => {
+    const status = await api.serviceStatus();
+    return { status, folders: await startFolders(status, appRoots, suggested) };
+  });
   const [adopted, setAdopted] = useState<ServiceStatus | null>(null);
-  const status = adopted ?? q.data ?? null;
+  const status = adopted ?? q.data?.status ?? null;
   const [working, setWorking] = useState<"preview" | "install" | null>(null);
 
   const close = () => onClose(status);
@@ -579,9 +616,10 @@ function TurnOnDialog({
       }}
     >
       <Dialog size="xl" className="dialog">
-        {status ? (
+        {status && q.data ? (
           <SaveForm
             status={status}
+            start={q.data.folders}
             appRoots={appRoots}
             suggested={suggested}
             home={home}
@@ -622,6 +660,7 @@ function TurnOnDialog({
 
 function SaveForm({
   status,
+  start,
   appRoots,
   suggested,
   home,
@@ -634,6 +673,8 @@ function SaveForm({
 }: {
   /** The dialog's read: everything below plans from it. */
   status: ServiceStatus;
+  /** The folders the dialog's first read starts from, resolved (`startFolders`). */
+  start: { chosen: SaveFolder[]; options: SaveFolder[] };
   appRoots: string[];
   suggested: string[];
   home: string | undefined;
@@ -645,12 +686,11 @@ function SaveForm({
   onChanged: (c: ServiceChange) => void;
   onFailed: () => void;
 }) {
-  const [options, setOptions] = useState<string[]>(() => [
-    ...new Set([...startFrom(status, appRoots, suggested).roots, ...suggested]),
-  ]);
-  const [chosen, setChosen] = useState<Set<string>>(
-    () => new Set(startFrom(status, appRoots, suggested).roots),
-  );
+  const [options, setOptions] = useState<SaveFolder[]>(start.options);
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(start.chosen.map((f) => f.path)));
+  // The folders the form's read starts from, resolved: a save that finds the
+  // service changed ticks the fresh read's only where these are still ticked.
+  const [startPaths, setStartPaths] = useState<string[]>(() => start.chosen.map((f) => f.path));
   const [dryRun, setDryRun] = useState(() => startFrom(status, appRoots, suggested).dryRun);
   const [previewed, setPreviewed] = useState<ServicePreview | null>(null);
   const [error, setError] = useState<CliError | null>(null);
@@ -659,7 +699,7 @@ function SaveForm({
   const plan = status.plan;
   const current = status.installed ? status.program : null;
   const replacing = status.installed;
-  const roots = options.filter((o) => chosen.has(o));
+  const roots = options.filter((o) => chosen.has(o.path)).map((o) => o.path);
   const settings = plan.settings;
   const low = diskLow(settings);
   const changes = current ? changedSettings(current, plan) : [];
@@ -672,9 +712,14 @@ function SaveForm({
     const picked = await openDialog({ directory: true, multiple: true, title: "Folders to watch" });
     const list = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
     if (list.length === 0) return;
-    setOptions((o) => [...new Set([...o, ...list])]);
-    setChosen((c) => new Set([...c, ...list]));
-    setPreviewed(null);
+    try {
+      const folders = await api.resolveFolders(list);
+      setOptions((o) => withFolders(o, folders));
+      setChosen((c) => new Set([...c, ...folders.map((f) => f.path)]));
+      setPreviewed(null);
+    } catch (e) {
+      setError(asCliError(e));
+    }
   };
 
   const toggle = (root: string, on: boolean) => {
@@ -713,8 +758,11 @@ function SaveForm({
       // read where the user had left them as the dialog started.
       const before = startFrom(status, appRoots, suggested);
       const after = startFrom(result.status, appRoots, suggested);
-      setOptions((o) => [...new Set([...o, ...after.roots])]);
-      setChosen((c) => (sameSet(c, before.roots) ? new Set(after.roots) : c));
+      const afterFolders = await api.resolveFolders(after.roots);
+      const afterPaths = afterFolders.map((f) => f.path);
+      setOptions((o) => withFolders(o, afterFolders));
+      setChosen((c) => (sameSet(c, startPaths) ? new Set(afterPaths) : c));
+      setStartPaths(afterPaths);
       setDryRun((d) => (d === before.dryRun ? after.dryRun : d));
       setPreviewed(null);
       setChangedSince(result.changes);
@@ -744,11 +792,11 @@ function SaveForm({
         <legend>Folders to watch</legend>
         {options.map((root) => (
           <Checkbox
-            key={root}
-            label={tilde(root, home)}
-            checked={chosen.has(root)}
+            key={root.path}
+            label={root.from ? `${tilde(root.path, home)}, from ${tilde(root.from, home)}` : tilde(root.path, home)}
+            checked={chosen.has(root.path)}
             disabled={locked}
-            onCheckedChange={(on) => toggle(root, on === true)}
+            onCheckedChange={(on) => toggle(root.path, on === true)}
           />
         ))}
         <Button variant="ghost" size="sm" icon={<FolderPlus />} disabled={locked} onClick={add}>

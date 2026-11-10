@@ -198,8 +198,11 @@ export interface ExplainDocument {
 export type RemoveResult = "removed" | "trashed" | "refused" | "skipped" | "failed" | "invalid";
 export type PurgeResult = "purged" | "kept" | "skipped" | "failed" | "invalid" | "not_attempted";
 
-/** In a plan (no `--yes`), a record the run would forget is `skipped`. */
-export type ForgetResult = "forgotten" | "skipped" | "failed" | "not_attempted";
+/**
+ * In a plan (no `--yes`), a record the run would forget is `skipped`, and one
+ * residue keeps for now, such as on a filesystem with no flock, `kept`.
+ */
+export type ForgetResult = "forgotten" | "kept" | "skipped" | "failed" | "not_attempted";
 
 export interface RemoveDocument {
   schema: "residue.remove/v1";
@@ -288,10 +291,57 @@ export interface StatsDocument {
   errors: string[];
 }
 
+/** A removal plan (`plan_removal`). */
 export interface Removal {
   document: RemoveDocument;
   exit_code: number | null;
+  /**
+   * Each worktree's folder, read right after the plan, by the path it was
+   * asked about: its device and inode. A confirm sends it back.
+   */
+  folders: Record<string, string>;
 }
+
+/** One worktree the removal dialog lists under "To the trash", as it shows it. */
+export interface ShownWorktree {
+  path: string;
+  canonical_path: string | null;
+  branch: string | null;
+  head: string | null;
+  locked: boolean;
+  folder: string | null;
+}
+
+/**
+ * What the removal dialog showed, which its confirm sends back. src-tauri
+ * plans again at the click and runs nothing when that plan differs from it
+ * (`src-tauri/src/plan.rs`).
+ */
+export interface ShownRemoval {
+  /** The plan's `as_of`: the confirmed run judges every age at it (#13). */
+  as_of: string;
+  worktrees: ShownWorktree[];
+  /** Every trash entry the plan lists, whatever its result. */
+  purges: TrashItem[];
+  /** Every removal record the plan lists, whatever its result. */
+  forgets: RemovalRecord[];
+}
+
+/**
+ * A confirm: residue ran, with what it did that the dialog did not show, one
+ * line each; or residue's plan at the click differs from the one shown, one
+ * line per change, and nothing ran.
+ */
+export type RemovalConfirm =
+  | {
+      outcome: "ran";
+      document: RemoveDocument;
+      exit_code: number | null;
+      /** Each worktree the dialog showed that the run left out because it changed. */
+      dropped: string[];
+      unlisted: string[];
+    }
+  | { outcome: "changed"; changes: string[] };
 
 /** How a restored worktree came back. */
 export type Checkout =
@@ -331,6 +381,27 @@ export interface Listing {
   root: string;
   document: RestoreDocument | null;
   error: CliError | null;
+  /** Each entry's folder, read right after the listing, by its `entry_path`. */
+  folders: Record<string, string>;
+}
+
+/** A Restore row as the window shows it, which its click sends back. */
+export interface ShownEntry {
+  kind: "trash" | "removed";
+  entry: string;
+  entry_path: string;
+  original_path: string | null;
+  branch: string | null;
+  head: string | null;
+  /** `trashed_at` or `removed_at`. */
+  at: string | null;
+  folder: string | null;
+}
+
+/** A restore: residue's answer, and how it differs from the row, one line each. */
+export interface Restored {
+  document: RestoreDocument;
+  unlike: string[];
 }
 
 /**
@@ -344,8 +415,11 @@ export type Restorable = {
   entryPath: string;
   originalPath: string | null;
   branch: string | null;
+  head: string | null;
   at: string | null;
   error: string | null;
+  /** Its folder, read when it was listed: a click restores only that folder. */
+  folder: string | null;
 } & (
   | { kind: "trash"; bytes: number | null; registered: boolean }
   | {
@@ -398,6 +472,16 @@ export interface Settings {
   roots: string[];
   saved: boolean;
   suggested: string[];
+}
+
+/**
+ * A folder the automatic cleanup dialog offers: `path` is the folder residue
+ * records, its canonical path, and `from` the text that led there through a
+ * link, when it differs.
+ */
+export interface SaveFolder {
+  path: string;
+  from: string | null;
 }
 
 /** One `residue watch` setting, as residue takes it: `1h`, `2d`, `10`. */
@@ -517,6 +601,8 @@ export interface ServiceChange {
   output: string[];
   dev_dry_run: boolean;
   status: ServiceStatus;
+  /** After a save: how the folders the service records differ from those sent, one line each. */
+  unlike: string[];
 }
 
 /**

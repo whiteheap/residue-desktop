@@ -48,6 +48,17 @@ pub fn home() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// `path` with the home folder as `~`, as the window shows paths, for text
+/// the app writes itself.
+pub fn tilde(path: &str, home: &Path) -> String {
+    let home = home.to_string_lossy();
+    match path.strip_prefix(home.as_ref()) {
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        Some("") => "~".into(),
+        _ => path.into(),
+    }
+}
+
 fn shell_path() -> Option<OsString> {
     let shell = std::env::var_os("SHELL")
         .filter(|s| !s.is_empty())
@@ -83,4 +94,18 @@ fn with_fallback(path: &OsStr) -> OsString {
         }
     }
     std::env::join_paths(dirs).unwrap_or_else(|_| FALLBACK.join(":").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tilde;
+    use std::path::Path;
+
+    #[test]
+    fn paths_under_home_show_with_a_tilde() {
+        let home = Path::new("/Users/me");
+        assert_eq!(tilde("/Users/me/src", home), "~/src");
+        assert_eq!(tilde("/Users/me", home), "~");
+        assert_eq!(tilde("/Users/meow/src", home), "/Users/meow/src");
+    }
 }

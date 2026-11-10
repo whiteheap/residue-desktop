@@ -9,10 +9,12 @@
 (* `residue service install --expect FINGERPRINT [OPTIONS] [--dry-run]     *)
 (* FOLDERS...` and `residue service uninstall`, with Copy after writing    *)
 (* the app's own copy of the bundled residue. A terminal, `brew upgrade`   *)
-(* or a new app put in place of this one can change the service, or the   *)
+(* or a new app put in place of this one can change the service, or the    *)
 (* residue a save installs, while a dialog is open, and with DuringSave    *)
-(* while a save runs. The coverage table in ../SKILL.md maps each action   *)
-(* to the code.                                                            *)
+(* while a save runs. A folder's path can come to lead to another folder,  *)
+(* as when a pull turns a folder on the way into a link: residue resolves  *)
+(* each FOLDER it is given and acts on the folder it reaches. The coverage *)
+(* table in ../SKILL.md maps each action to the code.                      *)
 (***************************************************************************)
 EXTENDS FiniteSets, Naturals
 
@@ -23,7 +25,7 @@ CONSTANTS
   MaxOpens,    \* how many times a dialog opens
   MaxOutside,  \* how many changes a terminal or brew makes
   World,       \* which of them can happen: "on", "off", "folders", "mode",
-               \* "options", "argument", "brew", "app"
+               \* "options", "argument", "brew", "app", "redirect"
   DuringSave,  \* TRUE: they can happen while a call of the app runs too (#11)
   Faults,      \* what may go wrong once in a behavior: "reload"
   Copy         \* TRUE: a save installs with the app's own copy of the bundled
@@ -44,9 +46,10 @@ VARIABLES
          \* the folders the save form ticks, and its preview
   calls, \* the app's `service install` and `uninstall` calls, by slot
   last,  \* what the app's last install replaced and wrote
-  n      \* counters: dialog opens, outside changes, faults
+  n,     \* counters: dialog opens, outside changes, faults
+  leads  \* the folder each folder's path leads to now
 
-vars == <<svc, ver, run, scr, dlg, calls, last, n>>
+vars == <<svc, ver, run, scr, dlg, calls, last, n, leads>>
 
 \* Each opening of a dialog has at most one call in flight, so two slots
 \* hold every call when a dialog opens at most twice.
@@ -86,10 +89,25 @@ StartRoots(b) == IF b.on /\ b.roots # {} THEN b.roots ELSE AppRoots
 NoRead == [on |-> FALSE, roots |-> {}, dry |-> FALSE, opts |-> "none", odd |-> FALSE, ver |-> "none",
            fp |-> "none"]
 \* The save form's preview: none shown, running for the folders ticked at
-\* the click, or shown for the folders it ran on.
-NoPreview == [phase |-> "none", roots |-> {}]
+\* the click, or shown for the folders it ran on: `roots` as the dialog
+\* sent them, `ran` the folders residue reached from them.
+NoPreview == [phase |-> "none", roots |-> {}, ran |-> {}]
+
+\* The folders residue reaches from `paths`: it resolves each one.
+Reach(paths) == {leads[f] : f \in paths}
+
+\* `settings::bound_folders`: each folder sent still leads to itself, as
+\* the dialog showed it. "NoFolderBinding" sends them unchecked.
+Bound(paths) == Mut("NoFolderBinding") \/ \A f \in paths : leads[f] = f
+
+\* What the dialog shows for a folder whose path it was given
+\* (`resolve_folders`): the folder residue reaches. Showing the path as
+\* given instead breaks no rule while `Bound` holds: a save of a path that
+\* led elsewhere before the dialog opened is refused, never wrong.
+Resolved(paths) == Reach(paths)
+\* `start`: the folders the form's read starts from, as it showed them.
 NoDialog == [kind |-> "none", phase |-> "none", shown |-> NoRead, blocked |-> FALSE,
-             chosen |-> {}, pre |-> NoPreview]
+             chosen |-> {}, start |-> {}, pre |-> NoPreview]
 \* `own`: the dialog that made the call is open and gets its reply. `page`:
 \* the call counts in this window's `changingService`, until its reply.
 \* `copied`: it wrote the app's own copy, which held `prev` before and
@@ -124,8 +142,8 @@ TypeOK ==
   /\ dlg.kind \in {"none", "on", "off"}
   /\ dlg.phase \in {"none", "reading", "form", "saving"}
   /\ dlg.shown \in Bases /\ dlg.blocked \in BOOLEAN
-  /\ dlg.chosen \subseteq Folders
-  /\ dlg.pre \in [phase : {"none", "running", "shown"}, roots : SUBSET Folders]
+  /\ dlg.chosen \subseteq Folders /\ dlg.start \subseteq Folders
+  /\ dlg.pre \in [phase : {"none", "running", "shown"}, roots : SUBSET Folders, ran : SUBSET Folders]
   /\ \A i \in Slots :
        /\ calls[i].kind \in {"none", "install", "uninstall"}
        /\ calls[i].phase \in {"none", "sent", "checked", "copied", "running", "landed", "changed",
@@ -146,6 +164,7 @@ Init ==
   /\ calls = [i \in Slots |-> NoCall]
   /\ last = NoLast
   /\ n = [opens |-> 0, outside |-> 0, faults |-> 0]
+  /\ leads = [f \in Folders |-> f]
 
 -----------------------------------------------------------------------------
 (* The screen and the dialogs.                                              *)
@@ -155,7 +174,7 @@ Init ==
 ScreenReads ==
   /\ scr # Read
   /\ scr' = Read
-  /\ UNCHANGED <<svc, ver, run, dlg, calls, last, n>>
+  /\ UNCHANGED <<svc, ver, run, dlg, calls, last, n, leads>>
 
 \* The switch, or "Change folders": the save dialog opens and reads the
 \* service itself. With "SwitchInstalls" the switch turns the service on for
@@ -173,16 +192,18 @@ YouOpenSave ==
             /\ UNCHANGED dlg
        ELSE /\ dlg' = [NoDialog EXCEPT !.kind = "on", !.phase = "reading"]
             /\ UNCHANGED calls
-  /\ UNCHANGED <<svc, ver, run, scr, last>>
+  /\ UNCHANGED <<svc, ver, run, scr, last, leads>>
 
-\* The dialog's own read lands (`useCli("save-dialog")`). The form says the
-\* service deletes instead of using the trash, whatever it shows, and ticks
-\* the folders it starts from.
+\* The dialog's own read lands (`useCli("save-dialog")`), with the folders
+\* it starts from resolved (`startFolders`). The form says the service
+\* deletes instead of using the trash, whatever it shows, and ticks the
+\* folders it starts from, as residue would reach them.
 DialogReads ==
   /\ dlg.kind = "on" /\ dlg.phase = "reading"
   /\ dlg' = [dlg EXCEPT !.phase = "form", !.shown = Read, !.blocked = Blocked,
-                        !.chosen = StartRoots(Read)]
-  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n>>
+                        !.chosen = Resolved(StartRoots(Read)),
+                        !.start = Resolved(StartRoots(Read))]
+  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n, leads>>
 
 \* A folder's checkbox, or "Add a folder…", whose folder picker is a sheet
 \* on the window that takes no other click while it is open. A change hides
@@ -192,29 +213,36 @@ YouTick ==
   /\ dlg.kind = "on"
   /\ \/ dlg.phase = "form" /\ dlg.pre.phase # "running"
      \/ Mut("ChoicesWhileBusy") /\ dlg.phase \in {"form", "saving"}
-  /\ \E f \in Folders :
+  /\ \E p \in Folders :
+       LET f == CHOOSE x \in Resolved({p}) : TRUE IN
        dlg' = [dlg EXCEPT !.chosen = IF f \in @ THEN @ \ {f} ELSE @ \cup {f},
                           !.pre = IF @.phase = "shown" THEN NoPreview ELSE @]
-  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n, leads>>
 
 \* Preview: one pass of the service with --dry-run for the folders ticked at
 \* the click. Disabled while Preview or Save runs, and with no folder.
+\* src-tauri refuses a folder that leads elsewhere now, running nothing,
+\* and the form shows the error; otherwise residue resolves each folder as
+\* it starts.
 YouPreview ==
   /\ dlg.kind = "on" /\ dlg.phase = "form" /\ dlg.pre.phase # "running"
   /\ dlg.chosen # {}
-  /\ dlg' = [dlg EXCEPT !.pre = [phase |-> "running", roots |-> dlg.chosen]]
-  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n>>
+  /\ dlg' = [dlg EXCEPT !.pre = IF Bound(dlg.chosen)
+                                  THEN [phase |-> "running", roots |-> dlg.chosen,
+                                        ran |-> Reach(dlg.chosen)]
+                                  ELSE NoPreview]
+  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n, leads>>
 
 PreviewLands ==
   /\ dlg.kind = "on" /\ dlg.pre.phase = "running"
   /\ dlg' = [dlg EXCEPT !.pre.phase = "shown"]
-  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n, leads>>
 
 \* The form shows residue's error.
 PreviewFails ==
   /\ dlg.kind = "on" /\ dlg.pre.phase = "running"
   /\ dlg' = [dlg EXCEPT !.pre = NoPreview]
-  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n, leads>>
 
 \* "Save folders" or "Turn on automatic cleanup", with the folders ticked and
 \* either mode. Disabled when the plan is blocked, with no folder, and while
@@ -229,7 +257,7 @@ YouSave ==
                         !.shown = dlg.shown, !.roots = dlg.chosen, !.dry = dry,
                         !.warned = TRUE, !.own = TRUE, !.page = TRUE]]
   /\ dlg' = [dlg EXCEPT !.phase = "saving"]
-  /\ UNCHANGED <<svc, ver, run, scr, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, last, n, leads>>
 
 \* The switch when the screen shows the service on: the turn-off dialog.
 YouOpenTurnOff ==
@@ -237,14 +265,14 @@ YouOpenTurnOff ==
   /\ n.opens < MaxOpens
   /\ n' = [n EXCEPT !.opens = @ + 1]
   /\ dlg' = [NoDialog EXCEPT !.kind = "off", !.phase = "form"]
-  /\ UNCHANGED <<svc, ver, run, scr, calls, last>>
+  /\ UNCHANGED <<svc, ver, run, scr, calls, last, leads>>
 
 YouTurnOff ==
   /\ dlg.kind = "off" /\ dlg.phase = "form"
   /\ calls' = [calls EXCEPT ![Free] =
        [NoCall EXCEPT !.kind = "uninstall", !.phase = "sent", !.own = TRUE, !.page = TRUE]]
   /\ dlg' = [dlg EXCEPT !.phase = "saving"]
-  /\ UNCHANGED <<svc, ver, run, scr, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, last, n, leads>>
 
 \* Cancel, Escape or a click outside, disabled while Preview or a call runs.
 \* Closing the save dialog reads the screen again when the dialog read differs.
@@ -252,7 +280,7 @@ YouCancel ==
   /\ dlg.kind # "none" /\ dlg.phase \in {"reading", "form"}
   /\ dlg.pre.phase # "running"
   /\ dlg' = NoDialog
-  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, calls, last, n, leads>>
 
 \* Command-1 to 5, the sidebar, or another call of `go` in App.tsx: another
 \* screen, then back. Leaving unmounts the dialog; a call it made runs on in
@@ -264,7 +292,7 @@ YouLeave ==
   /\ ~Held \/ Mut("LeaveWhileSaving")
   /\ dlg' = NoDialog
   /\ calls' = [i \in Slots |-> [calls[i] EXCEPT !.own = FALSE]]
-  /\ UNCHANGED <<svc, ver, run, scr, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, last, n, leads>>
 
 -----------------------------------------------------------------------------
 (* service.rs `install`: take `Changes`, read again, compare, check, then  *)
@@ -292,7 +320,7 @@ InstallChecks(i) ==
                     ELSE IF Blocked /\ ~Mut("NoBlockedCheck")
                       THEN [c EXCEPT !.phase = "failed"]
                     ELSE [c EXCEPT !.phase = "checked", !.keep = Keep(fresh), !.ver = fresh.ver]]
-  /\ UNCHANGED <<svc, ver, run, scr, dlg, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, dlg, last, n, leads>>
 
 \* With Copy, `install` writes the app's own copy from the bundled residue
 \* before residue runs (`copy_sidecar`), and keeps the copy it replaces
@@ -311,39 +339,49 @@ InstallCopies(i) ==
        ELSE /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "copied", !.copied = TRUE,
                                                        !.prev = run]]
             /\ run' = ver
-  /\ UNCHANGED <<svc, ver, scr, dlg, last, n>>
+  /\ UNCHANGED <<svc, ver, scr, dlg, last, n, leads>>
 
 \* The copy after a save that wrote nothing: the kept one, put back
 \* (`Previous::restore`). With "NoPutBack" the new one stays.
 PutBack(c) == IF c.copied /\ ~Mut("NoPutBack") THEN c.prev ELSE run
 
 \* `residue service install --expect` with the fingerprint of the basis the
-\* window sent. Under its lock, which every `residue service install` and
+\* window sent. Right before it starts, src-tauri checks that each folder
+\* still leads to itself (`bound_folders` in `install`): one that leads
+\* elsewhere fails the save with nothing written and the copy put back.
+\* residue resolves the folders as it starts, one step with that check
+\* here (Assumptions in ../SKILL.md). Under its lock, which every `residue service install` and
 \* `uninstall` takes, residue compares the service and its own release with
 \* that fingerprint right before it writes, so the two are one step. They
 \* differ: exit 4, nothing written, the copy put back, and `install` reads
 \* the service again for `Save::Changed`. Equal: residue writes the
-\* service, the folders and mode of the click, the options the fresh read
-\* keeps, run by the residue it found, with Copy the one in the app's copy.
-\* The reply can still fail: the read after the install, or a deadline.
-\* With "NoExpect" it writes whatever runs.
+\* service, the folders it reaches from those of the click, the mode of
+\* the click, the options the fresh read keeps, run by the residue it
+\* found, with Copy the one in the app's copy. The reply can still fail:
+\* the read after the install, or a deadline. With "NoExpect" it writes
+\* whatever runs.
 InstallLands(i) ==
   /\ calls[i].kind = "install" /\ calls[i].phase = IF Copy THEN "copied" ELSE "checked"
   /\ LET c == calls[i] IN
-     IF Now # Fp(c.seen) /\ ~Mut("NoExpect")
+     IF ~Bound(c.roots)
+       THEN /\ run' = PutBack(c)
+            /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "failed",
+                                                       !.after = IF c.copied THEN run' ELSE c.after]]
+            /\ UNCHANGED <<svc, last, leads>>
+     ELSE IF Now # Fp(c.seen) /\ ~Mut("NoExpect")
        THEN /\ run' = PutBack(c)
             /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "changed", !.fresh = Read,
                                                        !.freshBlocked = Blocked,
                                                        !.after = IF c.copied THEN run' ELSE c.after]]
-            /\ UNCHANGED <<svc, last>>
-       ELSE /\ svc' = [on |-> TRUE, roots |-> c.roots, dry |-> c.dry, opts |-> c.keep, odd |-> FALSE]
+            /\ UNCHANGED <<svc, last, leads>>
+       ELSE /\ svc' = [on |-> TRUE, roots |-> Reach(c.roots), dry |-> c.dry, opts |-> c.keep, odd |-> FALSE]
             /\ last' = [set |-> TRUE, before |-> svc, after |-> svc', ver |-> IF Copy THEN run ELSE ver,
                         shown |-> c.shown, roots |-> c.roots, dry |-> c.dry]
             /\ \E ok \in BOOLEAN :
                  calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = IF ok THEN "landed" ELSE "failed",
                                                          !.wrote = TRUE]]
             /\ UNCHANGED run
-  /\ UNCHANGED <<ver, scr, dlg, n>>
+  /\ UNCHANGED <<ver, scr, dlg, n, leads>>
 
 \* The read fails, the copy fails, or `residue service install` fails
 \* before it writes: the copy is put back.
@@ -353,13 +391,13 @@ InstallFails(i) ==
      /\ run' = PutBack(c)
      /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "failed",
                                                !.after = IF c.copied THEN run' ELSE c.after]]
-  /\ UNCHANGED <<svc, ver, scr, dlg, last, n>>
+  /\ UNCHANGED <<svc, ver, scr, dlg, last, n, leads>>
 
 \* `Changes::start` in `uninstall`: refused while another call runs.
 UninstallStarts(i) ==
   /\ calls[i].kind = "uninstall" /\ calls[i].phase = "sent"
   /\ calls' = [calls EXCEPT ![i].phase = IF Refused(i) THEN "failed" ELSE "running"]
-  /\ UNCHANGED <<svc, ver, run, scr, dlg, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, dlg, last, n, leads>>
 
 \* `residue service uninstall`, with no basis: turning off makes nothing delete.
 UninstallLands(i) ==
@@ -368,12 +406,12 @@ UninstallLands(i) ==
   /\ \E ok \in BOOLEAN :
        calls' = [calls EXCEPT ![i] = [calls[i] EXCEPT !.phase = IF ok THEN "landed" ELSE "failed",
                                                       !.wrote = TRUE]]
-  /\ UNCHANGED <<ver, run, scr, dlg, last, n>>
+  /\ UNCHANGED <<ver, run, scr, dlg, last, n, leads>>
 
 UninstallFails(i) ==
   /\ calls[i].kind = "uninstall" /\ calls[i].phase \in {"sent", "running"}
   /\ calls' = [calls EXCEPT ![i].phase = "failed"]
-  /\ UNCHANGED <<svc, ver, run, scr, dlg, last, n>>
+  /\ UNCHANGED <<svc, ver, run, scr, dlg, last, n, leads>>
 
 \* The reply settles the call, and `changingService` lets it go. When its
 \* dialog is open, the reply reaches it, and it cannot close while the call
@@ -388,21 +426,22 @@ ReplyArrives(i) ==
   /\ LET c == calls[i] IN
      IF c.phase = "changed" /\ c.own /\ Mut("RetryOnChange")
        THEN /\ calls' = [calls EXCEPT ![i] = [c EXCEPT !.phase = "sent", !.seen = c.fresh]]
-            /\ UNCHANGED <<dlg, scr>>
+            /\ UNCHANGED <<dlg, scr, leads>>
      ELSE IF ~c.own
        THEN /\ calls' = [calls EXCEPT ![i] = NoCall]
-            /\ UNCHANGED <<dlg, scr>>
+            /\ UNCHANGED <<dlg, scr, leads>>
      ELSE /\ calls' = [calls EXCEPT ![i] = NoCall]
           /\ dlg' = CASE c.phase = "landed" \/ dlg.kind = "none" -> NoDialog
                       [] c.phase = "changed" ->
                            [dlg EXCEPT !.phase = "form", !.shown = c.fresh,
                                        !.blocked = c.freshBlocked, !.pre = NoPreview,
-                                       !.chosen = IF @ = StartRoots(dlg.shown)
-                                                    THEN StartRoots(c.fresh) ELSE @]
+                                       !.chosen = IF @ = dlg.start
+                                                    THEN Resolved(StartRoots(c.fresh)) ELSE @,
+                                       !.start = Resolved(StartRoots(c.fresh))]
                       [] OTHER -> [dlg EXCEPT !.phase = "form"]
           /\ scr' = IF c.phase = "landed" \/ (c.phase = "failed" /\ c.kind = "install")
                       THEN Read ELSE scr
-  /\ UNCHANGED <<svc, ver, run, last, n>>
+  /\ UNCHANGED <<svc, ver, run, last, n, leads>>
 
 -----------------------------------------------------------------------------
 (* Faults, at most one in a behavior.                                       *)
@@ -417,7 +456,7 @@ Reload ==
   /\ dlg' = NoDialog
   /\ calls' = [i \in Slots |-> [calls[i] EXCEPT !.own = FALSE, !.page = FALSE]]
   /\ n' = [n EXCEPT !.faults = 1]
-  /\ UNCHANGED <<svc, ver, run, scr, last>>
+  /\ UNCHANGED <<svc, ver, run, scr, last, leads>>
 
 -----------------------------------------------------------------------------
 (* Outside the app: a terminal or `brew upgrade`, while no save of the app  *)
@@ -429,7 +468,7 @@ Outside(kind, new, v) ==
   /\ n.outside < MaxOutside
   /\ svc' = new /\ ver' = v
   /\ n' = [n EXCEPT !.outside = @ + 1]
-  /\ UNCHANGED <<run, scr, dlg, calls, last>>
+  /\ UNCHANGED <<run, scr, dlg, calls, last, leads>>
 
 TerminalTurnsOn ==
   /\ ~svc.on
@@ -457,6 +496,19 @@ BrewUpgrade == ~Copy /\ ver = "old" /\ Outside("brew", svc, "new")
 \* residue is another release, at the same path.
 AppReplaced == Copy /\ Outside("app", svc, IF ver = "old" THEN "new" ELSE "old")
 
+\* A folder on the way to f's path turns into a link to another folder g,
+\* as when a pull turns a tracked folder into a link. The service keeps the
+\* folder it recorded until residue resolves its paths again.
+Redirect ==
+  \E f, g \in Folders :
+    /\ f # g /\ leads[f] = f /\ leads[g] = g
+    /\ "redirect" \in World
+    /\ Idle \/ DuringSave
+    /\ n.outside < MaxOutside
+    /\ leads' = [leads EXCEPT ![f] = g]
+    /\ n' = [n EXCEPT !.outside = @ + 1]
+    /\ UNCHANGED <<svc, ver, run, scr, dlg, calls, last>>
+
 \* Nothing is left to happen: no dialog and no call.
 Finished ==
   /\ dlg.kind = "none" /\ Idle
@@ -472,7 +524,7 @@ Next ==
   \/ Reload
   \/ TerminalTurnsOn \/ TerminalTurnsOff \/ TerminalChangesFolders
   \/ TerminalSwitchesMode \/ TerminalChangesOptions \/ TerminalAddsArgument
-  \/ BrewUpgrade \/ AppReplaced
+  \/ BrewUpgrade \/ AppReplaced \/ Redirect
   \/ Finished
 
 Spec == Init /\ [][Next]_vars
@@ -510,7 +562,7 @@ WarnedBeforeItDeletes == \A i \in Slots : calls[i].kind = "install" => calls[i].
 
 \* The preview the dialog shows ran on exactly the folders it shows ticked.
 PreviewIsOfTheTickedFolders ==
-  dlg.kind = "on" /\ dlg.pre.phase = "shown" => dlg.pre.roots = dlg.chosen
+  dlg.kind = "on" /\ dlg.pre.phase = "shown" => dlg.pre.ran = dlg.chosen
 
 \* While the dialog saves, it shows ticked exactly the folders the save installs.
 SaveIsOfTheTickedFolders ==

@@ -8,25 +8,45 @@
 (* same command with --yes. Each reply can come late, fail, or find the    *)
 (* window gone. src-tauri knows when a confirmed run is in flight, also    *)
 (* one an earlier launch of the app started, and the window asks it        *)
-(* (src-tauri/src/removal.rs, #12). The coverage table in ../SKILL.md maps *)
-(* each action to the code.                                                *)
+(* (src-tauri/src/removal.rs, #12). At the click src-tauri plans again,    *)
+(* and runs nothing when that plan differs from the one the dialog showed  *)
+(* (src-tauri/src/plan.rs). The coverage table in ../SKILL.md maps each    *)
+(* action to the code.                                                     *)
 (*                                                                         *)
-(* A worktree is "go" when residue would move it now (verdict candidate),  *)
-(* "keep" when it would keep it, and "trash" once a run moved it.          *)
+(* A path in W names a worktree. It is "go" when residue would move it now *)
+(* (verdict candidate), "keep" when it would keep it, and "trash" once a   *)
+(* run moved it. The worktree at a path can change while it can still go: *)
+(* a commit, another branch, or another worktree at that path, of its own  *)
+(* repository or of "r2". Each repository has one trash entry older than   *)
+(* --keep-trash, which a run that names a path in that repository purges   *)
+(* unless it is in use then.                                               *)
 (***************************************************************************)
 EXTENDS FiniteSets, Naturals
 
 CONSTANTS
-  W,          \* the worktrees, such as {"a", "b"}
-  Faults,     \* what may go wrong once in a behavior: "reload", "draw"
-  Broken,     \* the guards removed, from model/mutants; {} is the code
-  MaxOpens,   \* how many times the dialog opens
-  MaxChanges  \* how many times a worktree turns from go to keep or back
+  W,           \* the worktrees, such as {"a", "b"}
+  Faults,      \* what may go wrong once in a behavior: "reload", "draw"
+  Broken,      \* the guards removed, from model/mutants; {} is the code
+  MaxOpens,    \* how many times the dialog opens
+  MaxChanges,  \* how many times a worktree turns from go to keep or back
+  MaxReplaces, \* how many times the worktree at a path changes and can still go
+  InUse,       \* TRUE: the expired trash entry of "r1" is in use at first
+  DuringRun    \* TRUE: a worktree at a path can also change between
+               \* src-tauri's plan at the click and residue's own plan in
+               \* the confirmed run
 
 Mut(name) == name \in Broken
 
+\* The repositories: every worktree starts in "r1"; "r2" is another one,
+\* whose worktree can take a listed path.
+Repos == {"r1", "r2"}
+
 VARIABLES
   truth,  \* what residue decides for each worktree now
+  ver,    \* which worktree is at each path: one more for each change of it
+  repo,   \* the repository of the worktree at each path
+  held,   \* each repository's expired trash entry is in use, so a run keeps it
+  gone,   \* the expired trash entries a run purged
   shown,  \* the verdict the Worktrees screen shows: "go", "keep" or "none"
   scan,   \* a scan runs; when it lands it replaces `shown`
   sel,    \* the worktrees ticked on the Worktrees screen (App `selected`)
@@ -38,20 +58,30 @@ VARIABLES
           \* from src-tauri (App `inFlight`): "asking", "none" or "running"
   win,    \* how many times the window started afresh
   app,    \* how many times the app quit and opened again: its process
-  n,      \* counters: dialog opens, changes, ids, faults
-  wrong   \* worktrees a run moved that the list it was confirmed from did not show
+  n,      \* counters: dialog opens, changes, replaces, ids, faults
+  wrong,  \* worktrees a run moved that the list it was confirmed from did not
+          \* show, at that path or as that worktree
+  wrongPurge \* trash entries a run purged that its list did not show
 
-vars == <<truth, shown, scan, sel, det, dlg, plans, runs, heard, win, app, n, wrong>>
+vars == <<truth, ver, repo, held, gone, shown, scan, sel, det, dlg, plans, runs, heard,
+          win, app, n, wrong, wrongPurge>>
 
 Phases == {"none", "planning", "plan", "running", "done", "error", "broken"}
 
 \* The dialog when it is not open. `id` names one opening of the dialog (one
 \* mount of RemoveDialog); `req` is the plan request its effect waits for.
 \* In "error", `withPlan` is the text that says to scan again to see what
-\* moved; without it the dialog says that nothing moved.
+\* moved; without it the dialog says that nothing moved. `ids` is the
+\* worktree the plan reported at each path, and `purges` the trash entries
+\* it lists.
+NoId == [v |-> 0, r |-> "none"]
 Closed == [open |-> FALSE, id |-> 0, paths |-> {}, req |-> 0, phase |-> "none",
            ready |-> {}, planFor |-> {}, withPlan |-> FALSE, ok |-> TRUE,
-           moved |-> {}]
+           moved |-> {}, ids |-> [w \in W |-> NoId], purges |-> {}]
+
+\* The worktree at path w now: which one, and its repository.
+Id(w) == [v |-> ver[w], r |-> repo[w]]
+Ids == [v : 0..MaxReplaces, r : Repos] \cup {NoId}
 
 NoChecks == [path |-> "none", v |-> "none"]
 
@@ -59,6 +89,8 @@ Verdict(w) == IF truth[w] = "trash" THEN "none" ELSE truth[w]
 
 TypeOK ==
   /\ truth \in [W -> {"go", "keep", "trash"}]
+  /\ ver \in [W -> 0..MaxReplaces] /\ repo \in [W -> Repos]
+  /\ held \in [Repos -> BOOLEAN] /\ gone \subseteq Repos
   /\ shown \in [W -> {"go", "keep", "none"}]
   /\ scan \in BOOLEAN
   /\ sel \subseteq W
@@ -66,16 +98,25 @@ TypeOK ==
   /\ dlg.open \in BOOLEAN /\ dlg.phase \in Phases
   /\ dlg.paths \subseteq W /\ dlg.ready \subseteq W /\ dlg.planFor \subseteq W
   /\ dlg.moved \subseteq W /\ dlg.ok \in BOOLEAN /\ dlg.withPlan \in BOOLEAN
+  /\ dlg.ids \in [W -> Ids] /\ dlg.purges \subseteq Repos
   /\ \A p \in plans : p.paths \subseteq W
-  /\ \A r \in runs : r.args \subseteq W /\ r.listed \subseteq W
-                     /\ r.st \in {"sent", "moved"} /\ r.moved \subseteq W
+  /\ \A r \in runs : r.args \subseteq W /\ r.sent \subseteq W /\ r.listed \subseteq W
+                     /\ r.st \in {"checking", "sent", "moved"} /\ r.moved \subseteq W
+                     /\ r.ids \in [W -> Ids] /\ r.purges \subseteq Repos
                      /\ r.app \in Nat
   /\ heard \in {"asking", "none", "running"}
   /\ app \in Nat
-  /\ wrong \subseteq W
+  /\ wrong \subseteq W /\ wrongPurge \subseteq Repos
 
 Init ==
   /\ truth \in [W -> {"go", "keep"}]
+  /\ ver = [w \in W |-> 0]
+  /\ repo = [w \in W |-> "r1"]
+  \* With InUse, the expired entry of "r1" is in use, by a process that
+  \* started using it after it entered the trash (residue trashes no
+  \* worktree in use), until Release. That of "r2" is not.
+  /\ held = [r \in Repos |-> InUse /\ r = "r1"]
+  /\ gone = {}
   /\ shown = truth
   /\ scan = FALSE
   /\ sel = {}
@@ -89,8 +130,9 @@ Init ==
   /\ heard = "none"
   /\ win = 0
   /\ app = 0
-  /\ n = [opens |-> 0, changes |-> 0, id |-> 0, faults |-> 0]
+  /\ n = [opens |-> 0, changes |-> 0, replaces |-> 0, id |-> 0, faults |-> 0]
   /\ wrong = {}
+  /\ wrongPurge = {}
 
 \* src-tauri knows that a confirmed run is in flight (removal.rs,
 \* `Removals`): one this app started, held in its State from before residue
@@ -111,19 +153,53 @@ Change(w) ==
   /\ truth[w] # "trash"
   /\ truth' = [truth EXCEPT ![w] = IF @ = "go" THEN "keep" ELSE "go"]
   /\ n' = [n EXCEPT !.changes = @ + 1]
-  /\ UNCHANGED <<shown, scan, sel, det, dlg, plans, runs, heard, win, app, wrong>>
+  /\ UNCHANGED <<ver, repo, held, gone, shown, scan, sel, det, dlg, plans, runs, heard, win,
+                 app, wrong, wrongPurge>>
+
+\* A confirmed run between src-tauri's plan at the click and residue's own
+\* plan, where neither sees a change to the worktree at a path.
+Unseen == \E r \in runs : r.st = "sent"
+
+\* While the dialog shows a plan or runs it. At any other time the next
+\* plan sees what changed, so a change then adds only states.
+Listing == dlg.open /\ dlg.phase \in {"plan", "running"}
+
+\* Outside the app the worktree at a path changes and can still go: a
+\* commit, another branch, or another worktree at that path, of the same
+\* repository or of another one, or a link there to one. Without DuringRun,
+\* not while a confirmed run is past src-tauri's plan and before residue's.
+Replace(w) ==
+  /\ n.replaces < MaxReplaces
+  /\ Listing
+  /\ truth[w] # "trash"
+  /\ DuringRun \/ ~Unseen
+  /\ truth' = [truth EXCEPT ![w] = "go"]
+  /\ ver' = [ver EXCEPT ![w] = @ + 1]
+  /\ \E r \in Repos : repo' = [repo EXCEPT ![w] = r]
+  /\ n' = [n EXCEPT !.replaces = @ + 1]
+  /\ UNCHANGED <<held, gone, shown, scan, sel, det, dlg, plans, runs, heard, win, app,
+                 wrong, wrongPurge>>
+
+\* The process that used an expired trash entry ends: residue's checks pass
+\* for it from now on. One in use from the start until the dialog lists it
+\* covers one that was never in use too: it is purged or kept the same.
+Release(r) ==
+  /\ held[r] /\ Listing
+  /\ held' = [held EXCEPT ![r] = FALSE]
+  /\ UNCHANGED <<truth, ver, repo, gone, shown, scan, sel, det, dlg, plans, runs, heard, win,
+                 app, n, wrong, wrongPurge>>
 
 \* Rescan or Command-R. Only the latest scan lands (useCli).
 YouRescan ==
   /\ ~dlg.open /\ ~scan
   /\ scan' = TRUE
-  /\ UNCHANGED <<truth, shown, sel, det, dlg, plans, runs, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, sel, det, dlg, plans, runs, heard, win, app, n, wrong, wrongPurge>>
 
 ScanLands ==
   /\ scan
   /\ scan' = FALSE
   /\ shown' = [w \in W |-> Verdict(w)]
-  /\ UNCHANGED <<truth, sel, det, dlg, plans, runs, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, sel, det, dlg, plans, runs, heard, win, app, n, wrong, wrongPurge>>
 
 \* A row has a checkbox only for a worktree that can go. The list, its
 \* checkboxes and its action bar show while no worktree's checks are open.
@@ -133,7 +209,7 @@ YouTick(w) ==
   /\ w \notin sel
   /\ shown[w] = "go"
   /\ sel' = sel \cup {w}
-  /\ UNCHANGED <<truth, shown, scan, det, dlg, plans, runs, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, det, dlg, plans, runs, heard, win, app, n, wrong, wrongPurge>>
 
 \* What the action bar moves: the ticked worktrees the shown scan says can go
 \* (Worktrees.tsx `chosen`). A tick stays when a later scan says keep.
@@ -148,9 +224,8 @@ MoveOn == heard = "none"
 \* Its effect starts the plan.
 Open(paths, ok) ==
   /\ n.opens < MaxOpens
-  /\ dlg' = [open |-> TRUE, id |-> n.id + 1, paths |-> paths, req |-> n.id + 1,
-             phase |-> "planning", ready |-> {}, planFor |-> {},
-             withPlan |-> FALSE, ok |-> ok, moved |-> {}]
+  /\ dlg' = [Closed EXCEPT !.open = TRUE, !.id = n.id + 1, !.paths = paths, !.req = n.id + 1,
+                            !.phase = "planning", !.ok = ok]
   /\ plans' = plans \cup {[id |-> n.id + 1, dlg |-> n.id + 1, paths |-> paths]}
   /\ n' = [n EXCEPT !.opens = @ + 1, !.id = @ + 1]
 
@@ -168,32 +243,32 @@ YouClickMove ==
             /\ plans' = plans \cup {[id |-> n.id + 1, dlg |-> dlg.id, paths |-> Chosen]}
             /\ n' = [n EXCEPT !.id = @ + 1]
        ELSE Open(Chosen, \A w \in Chosen : shown[w] = "go")
-  /\ UNCHANGED <<truth, shown, scan, sel, det, runs, heard, win, app, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, runs, heard, win, app, wrong, wrongPurge>>
 
 \* Open a worktree's checks (`residue explain`), read once when they open.
 YouOpenChecks(w) ==
   /\ ~dlg.open /\ det.path = "none"
   /\ shown[w] # "none"
   /\ det' = [path |-> w, v |-> "loading"]
-  /\ UNCHANGED <<truth, shown, scan, sel, dlg, plans, runs, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, dlg, plans, runs, heard, win, app, n, wrong, wrongPurge>>
 
 ChecksLand ==
   /\ det.v = "loading"
   /\ det' = [det EXCEPT !.v = Verdict(det.path)]
-  /\ UNCHANGED <<truth, shown, scan, sel, dlg, plans, runs, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, dlg, plans, runs, heard, win, app, n, wrong, wrongPurge>>
 
 \* Back, or Escape: the list again.
 YouLeaveChecks ==
   /\ ~dlg.open /\ det.path # "none"
   /\ det' = NoChecks
-  /\ UNCHANGED <<truth, shown, scan, sel, dlg, plans, runs, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, dlg, plans, runs, heard, win, app, n, wrong, wrongPurge>>
 
 \* "Move this worktree to the trash...", shown only for a worktree that can go.
 YouClickMoveInChecks ==
   /\ ~dlg.open /\ MoveOn
   /\ IF Mut("ChecksButtonForEveryVerdict") THEN det.v \in {"go", "keep"} ELSE det.v = "go"
   /\ Open({det.path}, det.v = "go")
-  /\ UNCHANGED <<truth, shown, scan, sel, det, runs, heard, win, app, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, runs, heard, win, app, wrong, wrongPurge>>
 
 -----------------------------------------------------------------------------
 (* The dialog and residue's replies. A reply lands only in the dialog whose  *)
@@ -202,9 +277,24 @@ YouClickMoveInChecks ==
 
 Moves(paths) == {w \in paths : truth[w] = "go"}
 
+\* The repositories a run of `paths` covers: those of the worktrees the
+\* paths name now, whatever residue decides for them (residue's repos_of).
+Scope(paths) == {repo[w] : w \in {x \in paths : truth[x] # "trash"}}
+
+\* The expired trash entries a plan of `paths` lists, each with residue's
+\* result: skipped (the run would purge it) or kept (it is in use).
+Expired(paths) == Scope(paths) \ gone
+
+\* What the dialog lists of them: every one, under "Deleted from the trash"
+\* or "May be deleted from the trash" (planLists in src/lib/plan.ts).
+\* "ListsOnlySkipped" lists only those residue would purge now.
+Listed(paths) ==
+  IF Mut("ListsOnlySkipped") THEN {r \in Expired(paths) : ~held[r]} ELSE Expired(paths)
+
 \* The plan: residue checks each path again and, without --yes, moves
 \* nothing. Each worktree it would move is `skipped` with verdict candidate:
-\* the list the dialog shows (`ready`). "PlanWithYes" sends --yes.
+\* the list the dialog shows (`ready`), each as the worktree it is now, with
+\* the trash entries it lists. "PlanWithYes" sends --yes.
 PlanLands == \E p \in plans :
   /\ plans' = plans \ {p}
   /\ LET mv == IF Mut("PlanWithYes") THEN Moves(p.paths) ELSE {} IN
@@ -212,24 +302,29 @@ PlanLands == \E p \in plans :
      /\ wrong' = wrong \cup mv
      /\ dlg' = IF dlg.open /\ dlg.req = p.id /\ dlg.phase # "broken"
                  THEN [dlg EXCEPT !.phase = "plan", !.ready = Moves(p.paths) \ mv,
-                                  !.planFor = p.paths, !.moved = @ \cup mv]
+                                  !.planFor = p.paths, !.moved = @ \cup mv,
+                                  !.ids = [w \in W |-> IF w \in p.paths THEN Id(w) ELSE NoId],
+                                  !.purges = Listed(p.paths)]
                  ELSE IF dlg.id = p.dlg THEN [dlg EXCEPT !.moved = @ \cup mv]
                  ELSE dlg
-  /\ UNCHANGED <<shown, scan, sel, det, runs, heard, win, app, n>>
+  /\ UNCHANGED <<ver, repo, held, gone, shown, scan, sel, det, runs, heard, win, app, n,
+                 wrongPurge>>
 
 PlanFails == \E p \in plans :
   /\ plans' = plans \ {p}
   /\ dlg' = IF dlg.open /\ dlg.req = p.id /\ dlg.phase # "broken"
               THEN [dlg EXCEPT !.phase = "error", !.withPlan = FALSE]
               ELSE dlg
-  /\ UNCHANGED <<truth, shown, scan, sel, det, runs, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, runs, heard, win, app, n, wrong, wrongPurge>>
 
 \* "Move N worktrees to the trash": the confirm button, disabled while a run
-\* runs. It sends the paths of the list it shows. src-tauri refuses it while
-\* a confirmed run is in flight (`Removals::start`), with kind invalid and
+\* runs. It sends what the list shows: its paths, the worktree at each, and
+\* the trash entries it lists (`shownOf`). src-tauri refuses it while a
+\* confirmed run is in flight (`Removals::start`), with kind invalid and
 \* before residue starts, so the refusal is its reply and one step with it:
 \* the dialog says this removal did not start, so nothing moved.
-\* "ConfirmWhileBusy" runs it anyway.
+\* "ConfirmWhileBusy" runs it anyway. Otherwise src-tauri plans again
+\* (ReplanLands); "NoReplan" runs the confirmed command at once.
 YouConfirm ==
   /\ dlg.open
   /\ dlg.ready # {}
@@ -240,20 +335,66 @@ YouConfirm ==
             /\ UNCHANGED <<runs, n>>
        ELSE /\ runs' = runs \cup {[id |-> n.id + 1, dlg |-> dlg.id, win |-> win, app |-> app,
                                    args |-> IF Mut("ConfirmSendsChoice") THEN dlg.paths ELSE dlg.ready,
-                                   listed |-> dlg.ready, st |-> "sent", moved |-> {}]}
+                                   sent |-> IF Mut("ConfirmSendsChoice") THEN dlg.paths ELSE dlg.ready,
+                                   listed |-> dlg.ready, ids |-> dlg.ids, purges |-> dlg.purges,
+                                   st |-> IF Mut("NoReplan") THEN "sent" ELSE "checking",
+                                   moved |-> {}]}
             /\ dlg' = [dlg EXCEPT !.phase = "running"]
             /\ n' = [n EXCEPT !.id = @ + 1]
-  /\ UNCHANGED <<truth, shown, scan, sel, det, plans, heard, win, app, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, plans, heard, win, app, wrong, wrongPurge>>
 
-\* residue checks every path once more and moves the ones that can still go.
+\* src-tauri's plan at the click: the confirmed command without --yes, for
+\* the paths sent (`confirm` in lib.rs, `plan::check`). A path that no longer
+\* names the worktree the list showed, or whose worktree residue would no
+\* longer move, is left out of the run, and the rest are planned again on
+\* their own (one step with the first plan here). They run when every trash
+\* entry their run would cover is one the list showed. Otherwise nothing
+\* runs, the removal ends, and the dialog plans your choice again and says
+\* what changed. "ReplanVerdictOnly" compares only that each can still go;
+\* "ReplanNoEntries" does not compare the trash entries.
+ReplanLands == \E r \in runs :
+  /\ r.st = "checking"
+  /\ LET keep == {w \in r.args : truth[w] = "go" /\ (Mut("ReplanVerdictOnly") \/ Id(w) = r.ids[w])}
+         listed(paths) == Mut("ReplanNoEntries") \/ Expired(paths) \subseteq r.purges
+     IN IF keep # {} /\ listed(keep)
+          THEN /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.st = "sent", !.args = keep]}
+               /\ UNCHANGED <<dlg, plans, n>>
+          ELSE /\ runs' = runs \ {r}
+               /\ IF dlg.id = r.dlg /\ r.win = win /\ dlg.phase # "broken"
+                    THEN /\ dlg' = [dlg EXCEPT !.phase = "planning", !.req = n.id + 1]
+                         /\ plans' = plans \cup {[id |-> n.id + 1, dlg |-> dlg.id, paths |-> dlg.paths]}
+                         /\ n' = [n EXCEPT !.id = @ + 1]
+                    ELSE UNCHANGED <<dlg, plans, n>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, heard, win, app, wrong,
+                 wrongPurge>>
+
+\* src-tauri's plan at the click fails, or its document cannot be read:
+\* kind invalid, nothing ran, and the dialog says this removal did not
+\* start, so nothing moved.
+ReplanFails == \E r \in runs :
+  /\ r.st = "checking"
+  /\ runs' = runs \ {r}
+  /\ dlg' = IF dlg.id = r.dlg /\ dlg.phase # "broken"
+              THEN [dlg EXCEPT !.phase = "error", !.withPlan = FALSE]
+              ELSE dlg
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, plans, heard, win, app, n,
+                 wrong, wrongPurge>>
+
+\* residue's confirmed run makes its own plan, checks every path once more
+\* against it, and moves the ones that can still go, as they are now. It
+\* purges each expired trash entry of the repositories it covers that is
+\* not in use.
 RunMoves == \E r \in runs :
   /\ r.st = "sent"
-  /\ LET mv == Moves(r.args) IN
-     /\ truth' = [w \in W |-> IF w \in mv THEN "trash" ELSE truth[w]]
-     /\ wrong' = wrong \cup (mv \ r.listed)
-     /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.st = "moved", !.moved = mv]}
-     /\ dlg' = IF dlg.id = r.dlg THEN [dlg EXCEPT !.moved = @ \cup mv] ELSE dlg
-  /\ UNCHANGED <<shown, scan, sel, det, plans, heard, win, app, n>>
+  /\ LET mv == Moves(r.args)
+         pg == {x \in Expired(r.args) : ~held[x]}
+     IN /\ truth' = [w \in W |-> IF w \in mv THEN "trash" ELSE truth[w]]
+        /\ gone' = gone \cup pg
+        /\ wrong' = wrong \cup {w \in mv : w \notin r.listed \/ Id(w) # r.ids[w]}
+        /\ wrongPurge' = wrongPurge \cup (pg \ r.purges)
+        /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.st = "moved", !.moved = mv]}
+        /\ dlg' = IF dlg.id = r.dlg THEN [dlg EXCEPT !.moved = @ \cup mv] ELSE dlg
+  /\ UNCHANGED <<ver, repo, held, shown, scan, sel, det, plans, heard, win, app, n>>
 
 \* The report lands: the dialog shows it, and App's onRemoved runs even when
 \* the dialog has closed: it unticks what moved, leaves the checks of a
@@ -268,17 +409,18 @@ RunLands == \E r \in runs :
             /\ det' = IF det.path \in r.moved THEN NoChecks ELSE det
             /\ scan' = TRUE
        ELSE UNCHANGED <<sel, det, scan>>
-  /\ UNCHANGED <<truth, shown, plans, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, plans, heard, win, app, n, wrong, wrongPurge>>
 
 \* residue exits with an error or no report, before it moved anything or
 \* after (the 30-minute deadline, a document the app cannot read). The
 \* dialog keeps the plan and says to scan again to see what moved.
 RunFails == \E r \in runs :
+  /\ r.st \in {"sent", "moved"}
   /\ runs' = runs \ {r}
   /\ dlg' = IF dlg.id = r.dlg /\ dlg.phase # "broken"
               THEN [dlg EXCEPT !.phase = "error", !.withPlan = ~Mut("RunErrorSaysNothingMoved")]
               ELSE dlg
-  /\ UNCHANGED <<truth, shown, scan, sel, det, plans, heard, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, plans, heard, win, app, n, wrong, wrongPurge>>
 
 \* Cancel, Close, Escape or a click outside. None of them closes the dialog
 \* while it plans or runs (`busy`). App then asks src-tauri whether a
@@ -289,7 +431,7 @@ YouClose ==
      \/ Mut("CloseWhileBusy") /\ dlg.phase \in {"planning", "running"}
   /\ dlg' = Closed
   /\ heard' = "asking"
-  /\ UNCHANGED <<truth, shown, scan, sel, det, plans, runs, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, plans, runs, win, app, n, wrong, wrongPurge>>
 
 \* src-tauri's answer (`removal_running`), read when it lands. While the
 \* window asks, both buttons that open the dialog are off, so no run starts
@@ -297,7 +439,7 @@ YouClose ==
 HeardLands ==
   /\ heard = "asking"
   /\ heard' = IF InFlight THEN "running" ELSE "none"
-  /\ UNCHANGED <<truth, shown, scan, sel, det, dlg, plans, runs, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, dlg, plans, runs, win, app, n, wrong, wrongPurge>>
 
 \* The wait (`wait_for_removal`) returns once no confirmed run is in flight:
 \* Move to the trash is on again, and App scans again.
@@ -305,14 +447,14 @@ RemovalEnds ==
   /\ heard = "running" /\ ~InFlight
   /\ heard' = "none"
   /\ scan' = TRUE
-  /\ UNCHANGED <<truth, shown, sel, det, dlg, plans, runs, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, sel, det, dlg, plans, runs, win, app, n, wrong, wrongPurge>>
 
 \* The ask or the wait fails (App's `.catch`): Move to the trash turns on
 \* rather than stay off for good, and src-tauri's refusal is the guard.
 HeardFails ==
   /\ heard \in {"asking", "running"}
   /\ heard' = "none"
-  /\ UNCHANGED <<truth, shown, scan, sel, det, dlg, plans, runs, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, dlg, plans, runs, win, app, n, wrong, wrongPurge>>
 
 -----------------------------------------------------------------------------
 (* Faults, at most one in a behavior.                                       *)
@@ -326,14 +468,14 @@ DrawFails ==
   /\ dlg.open /\ dlg.phase # "broken"
   /\ dlg' = [dlg EXCEPT !.phase = "broken"]
   /\ n' = [n EXCEPT !.faults = 1]
-  /\ UNCHANGED <<truth, shown, scan, sel, det, plans, runs, heard, win, app, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, scan, sel, det, plans, runs, heard, win, app, wrong, wrongPurge>>
 
 YouCloseBrokenDialog ==
   /\ dlg.open /\ dlg.phase = "broken"
   /\ dlg' = Closed
   /\ scan' = TRUE
   /\ heard' = "asking"
-  /\ UNCHANGED <<truth, shown, sel, det, plans, runs, win, app, n, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, shown, sel, det, plans, runs, win, app, n, wrong, wrongPurge>>
 
 \* The window starts afresh while residue keeps running: no dialog, nothing
 \* ticked, a first scan, and App asks src-tauri whether a confirmed run is
@@ -348,7 +490,7 @@ Afresh ==
   /\ scan' = TRUE
   /\ heard' = "asking"
   /\ n' = [n EXCEPT !.faults = 1]
-  /\ UNCHANGED <<truth, plans, runs, wrong>>
+  /\ UNCHANGED <<truth, ver, repo, held, gone, plans, runs, wrong, wrongPurge>>
 
 \* The last-resort "Try again" draws App anew; src-tauri and its State run on.
 TryAgain == Afresh /\ UNCHANGED app
@@ -365,13 +507,14 @@ Finished ==
   /\ UNCHANGED vars
 
 Next ==
-  \/ \E w \in W : Change(w)
+  \/ \E w \in W : Change(w) \/ Replace(w)
+  \/ \E r \in Repos : Release(r)
   \/ \E w \in W : YouTick(w)
   \/ \E w \in W : YouOpenChecks(w)
   \/ YouRescan \/ ScanLands \/ ChecksLand \/ YouLeaveChecks
   \/ YouClickMove \/ YouClickMoveInChecks
   \/ PlanLands \/ PlanFails
-  \/ YouConfirm
+  \/ YouConfirm \/ ReplanLands \/ ReplanFails
   \/ RunMoves \/ RunLands \/ RunFails
   \/ YouClose \/ HeardLands \/ RemovalEnds \/ HeardFails
   \/ DrawFails \/ YouCloseBrokenDialog \/ TryAgain \/ Relaunch
@@ -382,11 +525,16 @@ Spec == Init /\ [][Next]_vars
 -----------------------------------------------------------------------------
 (* The rules.                                                               *)
 
-\* A worktree goes to the trash only when the list you confirmed showed it.
+\* A worktree goes to the trash only when the list you confirmed showed it:
+\* that worktree, at that path.
 OnlyListedWorktreesMove == wrong = {}
 
-\* A confirm sends residue exactly the worktrees its list showed.
-ConfirmSendsTheList == \A r \in runs : r.args = r.listed
+\* A trash entry is deleted only when the list you confirmed showed it.
+OnlyListedEntriesPurged == wrongPurge = {}
+
+\* A confirm sends exactly the worktrees its list showed; src-tauri can only
+\* leave some out (ReplanLands).
+ConfirmSendsTheList == \A r \in runs : r.sent = r.listed /\ r.args \subseteq r.sent
 
 \* The dialog opens only for worktrees the window showed as can go, where you
 \* clicked.
