@@ -653,6 +653,15 @@ dd {
   margin-block-start: 0.35rem;
 }
 
+/* Folders before the first save: the note, and its action at the far end. */
+.confirm-folders {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+}
+
 /* What automatic cleanup freed since the app was last open. The status
    region stays in place while empty, so a screen reader hears it fill; its
    negative margin takes back the page's gap, so an empty one takes no room. */
@@ -1026,6 +1035,14 @@ dd {
 .service-notice {
   display: flex;
   flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* An empty state's actions, side by side and centered, wrapping when narrow. */
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 0.5rem;
 }
 

@@ -14,6 +14,7 @@ import type { ZoomLevel } from "./components/viz/Treemap";
 import { ErrorPanel, Loading } from "./components/ui";
 import { api, changingService } from "./lib/api";
 import { cleanedSinceLastOpen, rememberFreed, sinceLastOpen } from "./lib/freed";
+import { confirmedRoots, stillSuggested, unconfirmedRoots } from "./lib/folders";
 import { bytes } from "./lib/format";
 import type { InFlight, Settings } from "./lib/types";
 import type { Filter } from "./lib/viz";
@@ -54,12 +55,24 @@ export function App() {
   const info = infoQ.data;
   const settings = saved ?? settingsQ.data;
   const home = info?.home;
-  const roots = settings?.roots ?? NO_ROOTS;
+  // Only folders the user saved: until then the usual code folders are
+  // suggestions to confirm, since a scan runs Git in every repository under
+  // them (`confirmedRoots`).
+  const roots = settings ? confirmedRoots(settings) : NO_ROOTS;
 
   // Scan when the folders are known, and again whenever they change. The
   // key is a string, so the same folders in a new settings object do not
   // start another scan.
-  const rootsKey = settings && settings.roots.length > 0 ? JSON.stringify(settings.roots) : null;
+  const rootsKey = roots.length > 0 ? JSON.stringify(roots) : null;
+  // Save the suggested folders the user confirmed, which starts the scan.
+  // Only those a fresh read still suggests: a folder deleted since launch
+  // would make every save refuse. When none is left, the screen shows the
+  // fresh read: its suggestions, or the saved list.
+  const confirmFolders = useCallback(async (shown: string[]) => {
+    const fresh = await api.settings();
+    const keep = stillSuggested(shown, fresh);
+    setSaved(keep.length > 0 ? await api.setRoots(keep) : fresh);
+  }, []);
   const scanQ = useCli(rootsKey, () => api.scan(roots));
   // A scan of other folders is not shown as this one.
   const scanDoc = scanQ.dataKey === rootsKey ? scanQ.data : undefined;
@@ -301,6 +314,8 @@ export function App() {
                   error={scanQ.error}
                   scanning={scanQ.loading}
                   roots={roots}
+                  unconfirmed={unconfirmedRoots(settings)}
+                  onConfirm={confirmFolders}
                   home={home}
                   filter={filter}
                   onFilter={setFilter}
@@ -321,6 +336,9 @@ export function App() {
             ) : view === "restore" ? (
               <Restore
                 roots={roots}
+                unconfirmed={unconfirmedRoots(settings)}
+                onConfirm={confirmFolders}
+                onChooseFolders={() => go("folders")}
                 home={home}
                 keepTrash={info?.default_keep_trash}
                 keepRemoved={info?.default_keep_removed}
@@ -350,7 +368,7 @@ export function App() {
                 onReload={reloadStats}
               />
             ) : (
-              <Folders settings={settings} home={home} onSaved={setSaved} />
+              <Folders settings={settings} home={home} onSaved={setSaved} onConfirm={confirmFolders} />
             )}
           </ErrorBoundary>
         )}

@@ -1,5 +1,5 @@
 import { Button } from "@cloudflare/kumo";
-import { FolderPlus, Plus, X } from "@phosphor-icons/react";
+import { ArrowClockwise, FolderPlus, Plus, X } from "@phosphor-icons/react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { ErrorPanel, PageHeader, SolidButton } from "../components/ui";
@@ -11,25 +11,33 @@ export function Folders({
   settings,
   home,
   onSaved,
+  onConfirm,
 }: {
   settings: Settings;
   home: string | undefined;
   onSaved: (s: Settings) => void;
+  /** Save the suggested folders the user confirmed, those that still exist. */
+  onConfirm: (roots: string[]) => Promise<void>;
 }) {
   const [error, setError] = useState<CliError | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const save = async (roots: string[]) => {
+  const run = async (step: () => Promise<void>) => {
     setSaving(true);
     setError(null);
     try {
-      onSaved(await api.setRoots(roots));
+      await step();
     } catch (e) {
       setError(asCliError(e));
+      // A suggested folder deleted since the list was read makes every save
+      // of it refuse: read the suggestions again.
+      if (!settings.saved) api.settings().then(onSaved, () => {});
     } finally {
       setSaving(false);
     }
   };
+
+  const save = (roots: string[]) => run(async () => onSaved(await api.setRoots(roots)));
 
   const add = async () => {
     const picked = await openDialog({ directory: true, multiple: true, title: "Folders to scan" });
@@ -53,9 +61,15 @@ export function Folders({
       <div className="page-body">
         {error ? <ErrorPanel title="The folders were not saved" error={error} /> : null}
         {!settings.saved && settings.roots.length > 0 ? (
-          <p className="notice">
-            Found in your home folder. Add or remove one to save your own list.
-          </p>
+          <div className="notice confirm-folders">
+            <p>
+              Found in your home folder, not scanned yet: a scan runs Git in every repository under
+              them. Adding or removing one saves the list too.
+            </p>
+            <SolidButton icon={<ArrowClockwise />} disabled={saving} onClick={() => run(() => onConfirm(settings.roots))}>
+              Scan these folders
+            </SolidButton>
+          </div>
         ) : null}
         {settings.roots.length === 0 ? (
           <p className="quiet">No folders yet. Add the ones that hold your code.</p>

@@ -1,6 +1,7 @@
 import { Button, Checkbox, Empty, Tabs } from "@cloudflare/kumo";
 import { ArrowClockwise, ArrowsClockwise, CaretRight, FolderPlus, Trash } from "@phosphor-icons/react";
 import { useId, useMemo, type CSSProperties } from "react";
+import { ConfirmFolders } from "../components/ConfirmFolders";
 import { Treemap, type ZoomLevel } from "../components/viz/Treemap";
 import {
   ErrorPanel,
@@ -31,6 +32,8 @@ export function Worktrees({
   error,
   scanning,
   roots,
+  unconfirmed,
+  onConfirm,
   home,
   filter,
   onFilter,
@@ -51,6 +54,10 @@ export function Worktrees({
   error: CliError | undefined;
   scanning: boolean;
   roots: string[];
+  /** The usual code folders, offered until the user saves a list; none is scanned before that (`confirmedRoots`). */
+  unconfirmed: string[];
+  /** Save `roots` as the folders to scan, which starts the scan. */
+  onConfirm: (roots: string[]) => Promise<void>;
   home: string | undefined;
   /** The filter and the chart's zoom live in the app, so both outlast a visit to a worktree's checks. */
   filter: Filter;
@@ -116,6 +123,23 @@ export function Worktrees({
       }
     />
   );
+
+  if (roots.length === 0 && unconfirmed.length > 0) {
+    return (
+      <>
+        {header}
+        <div className="page-body">
+          <SinceOpen cleaned={cleaned} onFreed={onFreed} />
+          <ConfirmFolders
+            folders={unconfirmed}
+            home={home}
+            onConfirm={onConfirm}
+            onChooseFolders={onChooseFolders}
+          />
+        </div>
+      </>
+    );
+  }
 
   if (roots.length === 0) {
     return (
