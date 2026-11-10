@@ -280,21 +280,191 @@ impl Output {
     }
 }
 
-/// The command line, quoted for a shell, as residue shows its own commands.
+/// The command line, quoted for a shell, one word per argument, as
+/// `shellWord` in `src/lib/format.ts` quotes them. sh, bash, zsh, ksh and
+/// fish read each word back as the argument: a word that is not plain goes
+/// in single quotes, with each `'` and `\` written outside them as `\'` and
+/// `\\`, which fish reads as escapes inside single quotes. A word that
+/// holds a control character is written `$'…'` with each such character as
+/// `\xHH` bytes, so the text never holds one: a terminal could act on it as
+/// a key. bash, zsh and ksh read that word back as the argument, and the
+/// window turns copy off for it.
 pub fn shown(bin: &Path, args: &[OsString]) -> String {
     std::iter::once(bin.as_os_str())
         .chain(args.iter().map(OsString::as_os_str))
-        .map(|a| {
-            let a = a.to_string_lossy();
-            if !a.is_empty()
-                && a.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"/._-%=:".contains(&b))
-            {
-                a.into_owned()
-            } else {
-                format!("'{}'", a.replace('\'', "'\\''"))
-            }
-        })
+        .map(|a| shell_word(&a.to_string_lossy()))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Characters a terminal or a line editor can act on, or that draw text out
+/// of order: C0 controls, DEL, C1 controls, the line and paragraph
+/// separators, and the bidirectional controls.
+fn is_control(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+fn shell_word(a: &str) -> String {
+    let plain = |b: u8| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b);
+    // zsh expands a word that starts with `=`, fish one that starts with `%`.
+    if a.bytes().all(plain) && !a.starts_with(['=', '%']) && !a.is_empty() {
+        return a.to_string();
+    }
+    if !a.chars().any(is_control) {
+        let mut out = String::from("'");
+        for c in a.chars() {
+            match c {
+                '\'' | '\\' => {
+                    out.push('\'');
+                    out.push('\\');
+                    out.push(c);
+                    out.push('\'');
+                }
+                _ => out.push(c),
+            }
+        }
+        out.push('\'');
+        return out;
+    }
+    let mut out = String::from("$'");
+    let mut escaped = false;
+    for c in a.chars() {
+        // ksh takes every hex digit after `\x`, so one right after an
+        // escape is escaped too.
+        if is_control(c) || (escaped && c.is_ascii_hexdigit()) {
+            let mut buf = [0; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("\\x{b:02x}"));
+            }
+            escaped = true;
+        } else {
+            if matches!(c, '\\' | '\'') {
+                out.push('\\');
+            }
+            out.push(c);
+            escaped = false;
+        }
+    }
+    out.push('\'');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word(a: &str) -> String {
+        shown(Path::new(a), &[])
+    }
+
+    /// Reads one word as POSIX shells do: single quotes keep every byte,
+    /// outside them a backslash escapes the next character.
+    fn posix(word: &str) -> String {
+        let mut out = String::new();
+        let mut it = word.chars();
+        while let Some(c) = it.next() {
+            match c {
+                '\'' => out.extend(it.by_ref().take_while(|&c| c != '\'')),
+                '\\' => out.extend(it.next()),
+                _ => out.push(c),
+            }
+        }
+        out
+    }
+
+    /// Reads one word as fish does: inside single quotes `\'` and `\\` are
+    /// escapes, every other byte is kept.
+    fn fish(word: &str) -> String {
+        let mut out = String::new();
+        let mut it = word.chars().peekable();
+        while let Some(c) = it.next() {
+            match c {
+                '\'' => {
+                    while let Some(c) = it.next() {
+                        match c {
+                            '\'' => break,
+                            '\\' if matches!(it.peek(), Some('\'' | '\\')) => out.extend(it.next()),
+                            _ => out.push(c),
+                        }
+                    }
+                }
+                '\\' => out.extend(it.next()),
+                _ => out.push(c),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn plain_words_stay_bare() {
+        assert_eq!(
+            shown(
+                Path::new("/opt/homebrew/bin/residue"),
+                &[
+                    "watch".into(),
+                    "--grace".into(),
+                    "1h".into(),
+                    "/Users/a/src".into()
+                ]
+            ),
+            "/opt/homebrew/bin/residue watch --grace 1h /Users/a/src"
+        );
+        assert_eq!(word("a_b@c+d,e"), "a_b@c+d,e");
+        assert_eq!(word(""), "''");
+        assert_eq!(word("=cmd"), "'=cmd'");
+        assert_eq!(word("%self"), "'%self'");
+    }
+
+    #[test]
+    fn quoted_words_read_back_alike_in_posix_shells_and_fish() {
+        for a in [
+            "/Users/a/my worktree",
+            "/x/a\\';touch PWNED #",
+            "it's",
+            "back\\slash",
+            "\\'",
+            "''\\\\",
+            "$(echo hi)`x`",
+            "caf\u{e9} \u{1f600}",
+        ] {
+            let w = word(a);
+            assert!(w.starts_with('\''), "{a:?} gave {w:?}");
+            assert_eq!(posix(&w), a, "sh reads {w:?}");
+            assert_eq!(fish(&w), a, "fish reads {w:?}");
+        }
+    }
+
+    #[test]
+    fn control_characters_never_reach_the_text() {
+        let a = "/x/y\u{1b}[201~\u{15}touch PWNED2\r";
+        let w = word(a);
+        assert_eq!(w, "$'/x/y\\x1b[201~\\x15touch PWNED2\\x0d'");
+        for a in [
+            "a\u{7f}b",
+            "a\u{85}b",
+            "a\u{2028}b",
+            "a\u{202e}b",
+            "a\u{2066}b",
+            "a\nb",
+            "a\tb",
+        ] {
+            let w = word(a);
+            assert!(!w.chars().any(is_control), "{a:?} gave {w:?}");
+            assert!(w.starts_with("$'"), "{a:?} gave {w:?}");
+        }
+        // A hex digit right after an escape is escaped too, for ksh; a
+        // quote and a backslash keep their escapes.
+        assert_eq!(word("\u{1b}c9'\\z"), "$'\\x1b\\x63\\x39\\'\\\\z'");
+        assert_eq!(word("\u{202e}"), "$'\\xe2\\x80\\xae'");
+    }
 }

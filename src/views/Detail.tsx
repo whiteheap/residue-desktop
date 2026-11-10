@@ -6,7 +6,7 @@ import { Command, ErrorPanel, Loading, PageHeader, SolidButton, VerdictTag, Word
 import { Meter } from "../components/viz/Meter";
 import { SegmentedBar } from "../components/viz/SegmentedBar";
 import { api } from "../lib/api";
-import { age, baseName, bytes, grouped, shortHead, tilde } from "../lib/format";
+import { age, baseName, bytes, grouped, shellWord, shortHead, tilde } from "../lib/format";
 import type { CheckStatus, IgnoredEntry, InFlight, Check as ResidueCheck, Size, Worktree } from "../lib/types";
 import { documentTime, useCli } from "../lib/useCli";
 import { composition, shareText } from "../lib/viz";
@@ -246,7 +246,7 @@ export function Detail({
               <p className="quiet">
                 A locked worktree stays through every cleanup, by hand or automatic.
               </p>
-              <Command text={`git worktree lock --reason "keep" ${quote(w.path)}`} label="lock command" />
+              <Command text={`git worktree lock --reason keep ${shellWord(w.path)}`} label="lock command" />
             </section>
           </>
         ) : null}
@@ -308,8 +308,4 @@ function verdictText(w: Worktree): string {
 /** The checks that keep it come first; otherwise residue's order. */
 function checksFirstBlocking(checks: ResidueCheck[]): ResidueCheck[] {
   return [...checks.filter((c) => c.status !== "pass"), ...checks.filter((c) => c.status === "pass")];
-}
-
-function quote(path: string): string {
-  return /^[A-Za-z0-9/._-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
 }

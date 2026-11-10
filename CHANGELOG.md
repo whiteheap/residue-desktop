@@ -2,6 +2,10 @@
 
 Up to 0.0.10, the Mac app shipped in each residue-cli release, with residue's version, and its notes are in [residue-cli's CHANGELOG](https://github.com/whiteheap/residue-cli/blob/main/CHANGELOG.md).
 
+## Unreleased
+
+- A command the app shows to copy, such as the lock command on a worktree's checks, reads the same in fish as in zsh and bash: a backslash or a quote in a path is written outside the quotes, so the path stays one word. A command that holds a control character, as a folder name can, shows it escaped (`$'\x1b'`) and cannot be copied, since a terminal can act on such a character as a key. A failed run's command shows it escaped too.
+
 ## 0.0.12 (2026-11-09)
 
 It bundles residue 0.0.12, which keeps more worktrees that are in use or hold what it cannot rebuild, and a save replaces only the service its dialog showed.
