@@ -894,12 +894,16 @@ fn split_fetch(options: &[String]) -> (Vec<String>, Vec<String>) {
 
 /// `residue --version` of a binary: `residue 0.0.6`.
 fn version_of(bin: &Path, ctx: &Context) -> Option<String> {
+    version_within(bin, ctx, Duration::from_secs(5))
+}
+
+fn version_within(bin: &Path, ctx: &Context, deadline: Duration) -> Option<String> {
     let out = Run {
         bin,
         args: vec!["--version".into()],
         cwd: ctx.home,
         path_env: ctx.path_env,
-        deadline: Duration::from_secs(5),
+        deadline,
     }
     .output()
     .ok()?;
@@ -1059,26 +1063,35 @@ fn installs_as<'a>(ctx: &'a Context, installer: &'a Installer) -> (&'a Path, &'a
 }
 
 /// Copy the bundled binary to `dest`: written next to it, then renamed over
-/// it, so a running service keeps the file it started from.
-fn copy_sidecar(sidecar: &Path, dest: &Path) -> Result<(), CliError> {
-    use std::os::unix::fs::OpenOptionsExt;
+/// it, so a running service keeps the file it started from. Only when the
+/// copy is the residue the save showed (`expected`, from the read the save
+/// planned with): the app's bundle can be replaced on disk while the app
+/// runs, and then `ctx.sidecar` is another release.
+fn copy_sidecar(ctx: &Context, dest: &Path, expected: Option<&str>) -> Result<(), CliError> {
     let dir = dest
         .parent()
         .ok_or_else(|| CliError::failed(format!("{} has no parent", dest.display())))?;
     std::fs::create_dir_all(dir)
         .map_err(|e| CliError::failed(format!("cannot create {}: {e}", dir.display())))?;
+    remove_leftovers(dir);
     let tmp = dir.join(format!(".residue.{}.tmp", std::process::id()));
-    let result = (|| -> std::io::Result<()> {
-        let mut from = std::fs::File::open(sidecar)?;
-        let mut to = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o755)
-            .open(&tmp)?;
-        std::io::copy(&mut from, &mut to)?;
-        to.sync_all()?;
-        std::fs::rename(&tmp, dest)
+    let result = (|| -> Result<(), String> {
+        let mut from = std::fs::File::open(ctx.sidecar).map_err(|e| e.to_string())?;
+        let mut to = create_new(&tmp).map_err(|e| e.to_string())?;
+        std::io::copy(&mut from, &mut to).map_err(|e| e.to_string())?;
+        to.sync_all().map_err(|e| e.to_string())?;
+        drop(to);
+        let copied = version_within(&tmp, ctx, Duration::from_secs(30));
+        if copied.as_deref() != expected {
+            return Err(format!(
+                "the app's residue is now {}, and this save showed {}; open the dialog again",
+                copied
+                    .as_deref()
+                    .unwrap_or("a residue whose version cannot be read"),
+                expected.unwrap_or("version unknown"),
+            ));
+        }
+        std::fs::rename(&tmp, dest).map_err(|e| e.to_string())
     })();
     result.map_err(|e| {
         // The temporary file is ours; a failed copy leaves nothing behind.
@@ -1093,6 +1106,134 @@ fn copy_sidecar(sidecar: &Path, dest: &Path) -> Result<(), CliError> {
         }
         CliError::failed(format!("cannot copy residue to {}: {e}", dest.display()))
     })
+}
+
+/// Remove the temporary copies an earlier launch left in `dir`, one that quit
+/// or crashed during a copy: `.residue.PID.tmp`. Only the app writes them,
+/// and one save runs at a time. A name it cannot remove stays; the copy
+/// below still writes a file of its own.
+fn remove_leftovers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(".residue.") && name.ends_with(".tmp") {
+            // Removes a link itself, never what it points to.
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// A new file at `path`, executable, opened only when nothing is there:
+/// `O_CREAT | O_EXCL`, and `O_NOFOLLOW`, so a link at that name is never
+/// written through. A file left there by an earlier launch whose process had
+/// the same PID is removed first; `remove_file` removes a link, never what it
+/// points to.
+fn create_new(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let open = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o755)
+            .custom_flags(NOFOLLOW)
+            .open(path)
+    };
+    match open() {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            std::fs::remove_file(path)?;
+            open()
+        }
+        other => other,
+    }
+}
+
+#[cfg(target_os = "macos")]
+const NOFOLLOW: i32 = libc::O_NOFOLLOW;
+/// The app builds for macOS only; elsewhere `create_new`'s `O_EXCL` still
+/// refuses a link at the name.
+#[cfg(not(target_os = "macos"))]
+const NOFOLLOW: i32 = 0;
+
+/// The app's own copy as it was before a save, under a second name in the
+/// same folder, until residue has written the agent file: a hard link, or a
+/// copy of the file on a disk that has no hard links, such as exFAT. A save
+/// whose residue writes nothing puts it back (`restore`), so the service
+/// runs the residue it ran; one that wrote lets it go (`forget`). `kept` is
+/// `None` when there was no copy: then `restore` removes the one the save
+/// made.
+struct Previous {
+    bin: PathBuf,
+    kept: Option<PathBuf>,
+}
+
+impl Previous {
+    fn keep(bin: &Path) -> Result<Previous, CliError> {
+        Previous::keep_with(bin, |from, to| std::fs::hard_link(from, to))
+    }
+
+    /// `keep`, with `link` making the second name's hard link.
+    fn keep_with(
+        bin: &Path,
+        link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<Previous, CliError> {
+        let prev = bin.with_file_name(".residue.prev");
+        remove_if_there(&prev)
+            .map_err(|e| CliError::failed(format!("cannot remove {}: {e}", prev.display())))?;
+        let kept = match link(bin, &prev) {
+            Ok(()) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            // No hard link here: a copy of the file, permissions included.
+            Err(_) => match std::fs::copy(bin, &prev) {
+                Ok(_) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                Err(e) => {
+                    let _ = remove_if_there(&prev);
+                    return Err(CliError::failed(format!(
+                        "cannot keep {} as {}: {e}",
+                        bin.display(),
+                        prev.display()
+                    )));
+                }
+            },
+        };
+        Ok(Previous {
+            bin: bin.to_path_buf(),
+            kept: kept.then_some(prev),
+        })
+    }
+
+    /// Put back what `bin` named before the save, in one rename, or remove
+    /// the copy the save made where there was none. A rename between two
+    /// links to one file changes nothing, as when the copy never replaced
+    /// it, so the kept name is removed after it.
+    fn restore(self) -> Result<(), String> {
+        let undone = match &self.kept {
+            Some(prev) => std::fs::rename(prev, &self.bin),
+            None => remove_if_there(&self.bin),
+        };
+        undone
+            .and_then(|()| self.kept.as_deref().map_or(Ok(()), remove_if_there))
+            .map_err(|e| format!("cannot put back {}: {e}", self.bin.display()))
+    }
+
+    fn forget(self) -> Result<(), String> {
+        match &self.kept {
+            Some(prev) => {
+                remove_if_there(prev).map_err(|e| format!("cannot remove {}: {e}", prev.display()))
+            }
+            None => Ok(()),
+        }
+    }
+}
+
+fn remove_if_there(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
 }
 
 /// The `residue watch` arguments: kept options, `--dry-run`, then the roots.
@@ -1209,10 +1350,24 @@ pub fn install(
     args.insert(2, "--expect".into());
     args.insert(3, fingerprint.into());
     // Only a real save writes the app's own copy: the preview installs
-    // nothing, so it needs none.
-    if installer.managed {
-        copy_sidecar(ctx.sidecar, &installer.bin)?;
-    }
+    // nothing, so it needs none. The copy the service runs keeps a second
+    // name until residue has written the agent file: when residue writes
+    // nothing, it goes back, so a save that installs nothing leaves the
+    // service on the residue it ran.
+    let plist = agent_file(ctx.home);
+    let before = std::fs::read(&plist).ok();
+    let previous = if installer.managed {
+        let previous = Previous::keep(&installer.bin)?;
+        if let Err(e) = copy_sidecar(ctx, &installer.bin, installer.version.as_deref()) {
+            return Err(match previous.restore() {
+                Ok(()) => e,
+                Err(undo) => CliError::failed(format!("{}; {undo}", e.message)),
+            });
+        }
+        Some(previous)
+    } else {
+        None
+    };
     let out = Run {
         bin: &installer.bin,
         args,
@@ -1220,7 +1375,39 @@ pub fn install(
         path_env: &installer.path_env,
         deadline: Duration::from_secs(60),
     }
-    .output()?;
+    .output();
+    // Exit 0: residue wrote the service. Exit 4: it wrote nothing, as its
+    // `--expect` promises. Any other failure: the agent file's bytes are the
+    // only sign, and a change to them is taken as residue's. The same bytes
+    // do not show residue did not write, since a save of the same service
+    // writes them again, so no message below says that nothing changed.
+    let landed = matches!(&out, Ok(o) if o.code == Some(0));
+    let refused = matches!(&out, Ok(o) if o.code == Some(EXPECT_CHANGED));
+    let wrote = landed || (!refused && std::fs::read(&plist).ok() != before);
+    if let Some(previous) = previous {
+        let undo = if wrote {
+            previous.forget()
+        } else {
+            previous.restore()
+        };
+        match undo {
+            Ok(()) => {}
+            // The save stands; the next save removes the kept name.
+            Err(undo) if wrote => eprintln!("residue app: {undo}"),
+            Err(undo) => {
+                let mut error = match out {
+                    Ok(out) => out.error(
+                        ErrorKind::Failed,
+                        "residue could not install the service".into(),
+                    ),
+                    Err(e) => e,
+                };
+                error.message = format!("{}; {undo}", error.message);
+                return Err(error);
+            }
+        }
+    }
+    let out = out?;
     if out.code == Some(EXPECT_CHANGED) {
         // Nothing was written: show the service as it is now, to save again.
         let status = status(ctx, dev)?;
@@ -1233,7 +1420,11 @@ pub fn install(
     if out.code != Some(0) {
         return Err(out.error(
             ErrorKind::Failed,
-            "residue could not install the service".into(),
+            if wrote {
+                "residue failed after the service's agent file changed".into()
+            } else {
+                "residue could not install the service".into()
+            },
         ));
     }
     Ok(Save::Saved {
@@ -1330,4 +1521,339 @@ fn run_preview(
             .collect(),
         fetch: watch_settings(options, installer.version.as_deref()).fetch,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! A save with the app's own copy, against a stand-in residue: a shell
+    //! script in a scratch folder that answers `--version`, `service status`
+    //! and `service install` as the case needs, and never runs launchd.
+    use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+    /// A scratch folder, removed on drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let dir = std::env::temp_dir()
+                .join(format!("residue-app-test-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Scratch(dir.canonicalize().unwrap())
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn script(path: &Path, body: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A residue that prints `residue VERSION` for --version, says the
+    /// service is off with a fingerprint, logs each `service install` it is
+    /// given to `install.log` in the working folder (the scratch HOME), and
+    /// then does `install` (shell).
+    fn residue(version: &str, install: &str) -> String {
+        format!(
+            r#"case "$1 $2" in
+  "--version ") echo "residue {version}" ;;
+  "service status") echo "launchd agent {LABEL}: not installed"; echo "fingerprint: 0123456789abcdef0123456789abcdef"; exit 3 ;;
+  "service install") echo "$@" >> install.log; {install} ;;
+  *) exit 2 ;;
+esac"#
+        )
+    }
+
+    struct Machine {
+        home: Scratch,
+        sidecar: PathBuf,
+        data_dir: PathBuf,
+        path_env: OsString,
+        changes: Changes,
+        dev: DevPreview,
+    }
+
+    impl Machine {
+        /// The bundled residue prints `bundled`; a save installs `install`.
+        fn new(name: &str, bundled: &str, install: &str) -> Machine {
+            let home = Scratch::new(name);
+            let sidecar = home.0.join("app/residue-cli");
+            script(&sidecar, &residue(bundled, install));
+            let data_dir = home.0.join("data");
+            // Only /usr/bin and /bin: the stand-in needs a shell, and no
+            // residue there is one a save would pick.
+            let path_env = OsString::from("/usr/bin:/bin");
+            Machine {
+                sidecar,
+                data_dir,
+                path_env,
+                home,
+                changes: Changes::default(),
+                dev: DevPreview {
+                    enabled: false,
+                    state: Mutex::new(Pretend::Set(None)),
+                },
+            }
+        }
+
+        fn ctx<'a>(&'a self, bundled_version: &'a str) -> Context<'a> {
+            Context {
+                sidecar: &self.sidecar,
+                bundled_version,
+                data_dir: &self.data_dir,
+                home: &self.home.0,
+                path_env: &self.path_env,
+                changes: &self.changes,
+            }
+        }
+
+        fn copy(&self) -> PathBuf {
+            managed_binary(&self.data_dir)
+        }
+
+        fn installs(&self) -> String {
+            std::fs::read_to_string(self.home.0.join("install.log")).unwrap_or_default()
+        }
+
+        /// The folder's names other than the copy itself: no kept or
+        /// temporary file may stay.
+        fn leftovers(&self) -> Vec<String> {
+            let Ok(entries) = std::fs::read_dir(self.copy().parent().unwrap()) else {
+                return Vec::new();
+            };
+            entries
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n != "residue")
+                .collect()
+        }
+
+        /// Read, as the dialog does, then save with that read's basis.
+        fn save(&self, bundled_version: &str) -> Result<Save, CliError> {
+            let ctx = self.ctx(bundled_version);
+            // Never let a residue installed on this machine run the save.
+            let (_, installer) = read(&ctx, &self.dev).unwrap();
+            assert!(installer.managed, "the save must use the app's own copy");
+            let seen = status(&ctx, &self.dev).unwrap().basis;
+            install(
+                &ctx,
+                &self.dev,
+                std::slice::from_ref(&self.home.0),
+                true,
+                &seen,
+            )
+        }
+    }
+
+    // The bundled version in these cases is far above any release, so
+    // `find_installer` never takes a residue installed on this machine.
+    const BUNDLED: &str = "900.0.1";
+    const OLDER: &str = "residue 900.0.0";
+
+    #[test]
+    fn a_refused_save_puts_back_the_copy_the_service_runs() {
+        let m = Machine::new("refused", BUNDLED, "echo refused >&2; exit 1");
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+        let before = std::fs::metadata(m.copy()).unwrap().ino();
+
+        let err = m.save(BUNDLED).unwrap_err();
+
+        assert_eq!(err.message, "residue could not install the service");
+        assert_eq!(m.installs().lines().count(), 1, "residue ran once");
+        assert_eq!(std::fs::metadata(m.copy()).unwrap().ino(), before);
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(OLDER)
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_refused_save_removes_a_copy_that_was_not_there() {
+        let m = Machine::new("refused-new", BUNDLED, "exit 1");
+
+        m.save(BUNDLED).unwrap_err();
+
+        assert!(!m.copy().exists());
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_save_that_wrote_the_agent_file_keeps_the_new_copy() {
+        let m = Machine::new(
+            "wrote",
+            BUNDLED,
+            &format!(
+                "mkdir -p Library/LaunchAgents && echo new > Library/LaunchAgents/{LABEL}.plist; exit 1"
+            ),
+        );
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+
+        let err = m.save(BUNDLED).unwrap_err();
+
+        assert_eq!(
+            err.message,
+            "residue failed after the service's agent file changed"
+        );
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(format!("residue {BUNDLED}").as_str())
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_save_that_lands_keeps_the_new_copy() {
+        let m = Machine::new("landed", BUNDLED, "exit 0");
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+
+        // The read after the save says off again; the save itself landed.
+        assert!(matches!(m.save(BUNDLED), Ok(Save::Saved { .. })));
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(format!("residue {BUNDLED}").as_str())
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_save_whose_residue_finds_the_service_changed_puts_back_the_copy() {
+        let m = Machine::new("expect", BUNDLED, &format!("exit {EXPECT_CHANGED}"));
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+
+        assert!(matches!(m.save(BUNDLED), Ok(Save::Changed { .. })));
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(OLDER)
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    /// The app replaced on disk after its version was read: the bundled
+    /// binary is now another release than the save showed.
+    #[test]
+    fn a_save_copies_only_the_residue_it_showed() {
+        let m = Machine::new("replaced", "900.0.2", "exit 0");
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+
+        let err = m.save(BUNDLED).unwrap_err();
+
+        assert!(
+            err.message
+                .contains("is now residue 900.0.2, and this save showed residue 900.0.1"),
+            "{}",
+            err.message
+        );
+        assert_eq!(m.installs(), "", "residue never ran");
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(OLDER)
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    /// Exit 4 is residue's word that it wrote nothing, whatever the agent
+    /// file's bytes did meanwhile, such as a terminal's install.
+    #[test]
+    fn a_save_refused_with_exit_4_puts_back_the_copy_even_when_the_file_changed() {
+        let m = Machine::new(
+            "expect-changed-file",
+            BUNDLED,
+            &format!(
+                "f=Library/LaunchAgents/{LABEL}.plist; mkdir -p Library/LaunchAgents && plutil -create xml1 $f && plutil -insert ProgramArguments -json '[\"/elsewhere/residue\",\"watch\",\"/tmp\"]' $f; exit {EXPECT_CHANGED}"
+            ),
+        );
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+
+        assert!(matches!(m.save(BUNDLED), Ok(Save::Changed { .. })));
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(OLDER)
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    /// A disk with no hard links, such as exFAT, answers `hard_link` with
+    /// "Operation not supported": the copy is kept as a copy instead.
+    #[test]
+    fn put_back_where_the_disk_has_no_hard_links() {
+        let m = Machine::new("no-links", BUNDLED, "exit 0");
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+        let unsupported = |_: &Path, _: &Path| -> std::io::Result<()> {
+            Err(std::io::Error::from_raw_os_error(libc::ENOTSUP))
+        };
+
+        let previous = Previous::keep_with(&m.copy(), unsupported).unwrap();
+        assert!(previous.kept.is_some());
+        let want = format!("residue {BUNDLED}");
+        copy_sidecar(&m.ctx(BUNDLED), &m.copy(), Some(&want)).unwrap();
+        previous.restore().unwrap();
+
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(OLDER)
+        );
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_copy_removes_the_temporary_files_an_earlier_launch_left() {
+        let m = Machine::new("leftovers", BUNDLED, "exit 0");
+        let dir = m.copy().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".residue.4242.tmp"), "half a copy").unwrap();
+        let target = m.home.0.join("elsewhere");
+        std::fs::write(&target, "keep me").unwrap();
+        symlink(&target, dir.join(".residue.4243.tmp")).unwrap();
+
+        let want = format!("residue {BUNDLED}");
+        copy_sidecar(&m.ctx(BUNDLED), &m.copy(), Some(&want)).unwrap();
+
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep me");
+    }
+
+    #[test]
+    fn the_copy_never_writes_through_a_link_at_its_temporary_name() {
+        let m = Machine::new("link", BUNDLED, "exit 0");
+        let target = m.home.0.join("elsewhere");
+        std::fs::write(&target, "keep me").unwrap();
+        let dir = m.copy().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        symlink(
+            &target,
+            dir.join(format!(".residue.{}.tmp", std::process::id())),
+        )
+        .unwrap();
+
+        let want = format!("residue {BUNDLED}");
+        copy_sidecar(&m.ctx(BUNDLED), &m.copy(), Some(&want)).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep me");
+        assert_eq!(
+            version_of(&m.copy(), &m.ctx(BUNDLED)).as_deref(),
+            Some(want.as_str())
+        );
+        assert!(!std::fs::symlink_metadata(m.copy()).unwrap().is_symlink());
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn put_back_after_a_copy_that_never_replaced_the_file() {
+        let m = Machine::new("same-file", BUNDLED, "exit 0");
+        script(&m.copy(), &residue("900.0.0", "exit 1"));
+        let before = std::fs::metadata(m.copy()).unwrap().ino();
+
+        // Both names link one file: the rename back changes nothing.
+        Previous::keep(&m.copy()).unwrap().restore().unwrap();
+
+        assert_eq!(std::fs::metadata(m.copy()).unwrap().ino(), before);
+        assert_eq!(m.leftovers(), Vec::<String>::new());
+    }
 }
