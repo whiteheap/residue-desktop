@@ -18,7 +18,7 @@ Open an issue before you start on anything larger than a small fix, so we can ag
 
 ## Set up
 
-You need macOS 13 or later with Xcode's command line tools (`xcode-select --install`), rustup, Node 22.12 or later, and pnpm, the version in `package.json`'s `packageManager`. rustup installs the Rust version in `rust-toolchain.toml`, with both macOS targets, on the first build. With [gh](https://cli.github.com) logged in, the build also checks the bundled residue's build-provenance attestation.
+You need macOS 13 or later with Xcode's command line tools (`xcode-select --install`), rustup, Node 22.18 or later (`pnpm test` runs TypeScript tests directly), and pnpm, the version in `package.json`'s `packageManager`. rustup installs the Rust version in `rust-toolchain.toml`, with both macOS targets, on the first build. With [gh](https://cli.github.com) logged in, the build also checks the bundled residue's build-provenance attestation.
 
 ```sh
 git clone https://github.com/whiteheap/residue-ui
