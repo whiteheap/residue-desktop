@@ -2,20 +2,24 @@
 # Place the residue CLI where Tauri's externalBin expects it:
 # src-tauri/binaries/residue-cli-<target>, for aarch64-apple-darwin,
 # x86_64-apple-darwin and universal-apple-darwin (the two joined with lipo).
-# Nothing here is committed: src-tauri/binaries/ is ignored.
+# Only this script fills src-tauri/binaries/: it is ignored, and every mode
+# refuses a file there that git tracks, since `git add -f` can commit one.
 #
 #   sh scripts/sidecar.sh
 #       Place the residue-cli release that sidecar.lock pins: download its
 #       two macOS archives and check each one's sha256 against the lock and,
-#       when gh is logged in, its build-provenance attestation. A release
-#       already placed is kept, so a second run downloads nothing.
-#       `tauri dev` and `tauri build` run this first.
+#       when gh is logged in, its build-provenance attestation, then each
+#       binary inside against the sha256 the lock pins for it. A release
+#       already placed is kept while every binary is still the one the lock
+#       pins, so a second run downloads nothing. `tauri dev` and `tauri
+#       build` run this first.
 #   sh scripts/sidecar.sh --require-attestation
-#       The same, but fail when the attestation cannot be checked. CI and
-#       the release run this.
+#       Download and check again, whatever is placed, and fail when the
+#       attestation cannot be checked. CI and the release run this.
 #   sh scripts/sidecar.sh --check
-#       Change nothing; fail unless the pinned release is placed, with its
-#       attestation checked. scripts/check-app.sh runs this.
+#       Change nothing; fail unless the pinned release is placed with its
+#       attestation checked and every binary is the one the lock pins.
+#       scripts/check-app.sh runs this.
 #   RESIDUE_CLI_SOURCE=DIR sh scripts/sidecar.sh
 #       Build residue from the residue-cli checkout in DIR instead, for both
 #       architectures, to try the app with a change to the CLI. `pnpm tauri
@@ -24,9 +28,8 @@
 #
 # Each way checks that each binary holds its one architecture, the universal
 # one both, and that it prints the version it should. src-tauri/binaries/.placed
-# then records what is there: the release or the checkout on its first line,
-# each binary's sha256 on its second. A release is kept only while every
-# binary is still the file it records.
+# then records what is there: the release, and whether its attestation was
+# checked, or the checkout.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -60,25 +63,43 @@ arch_is() {
   [ "$got" = "$2" ] || fail "$1 holds $got, expected $2"
 }
 
-# .placed's second line: "binaries" and each binary's sha256, the universal
-# one last.
-sums() {
-  line=binaries
-  for t in $targets universal-apple-darwin; do
-    line="$line $(shasum -a 256 "$out/residue-cli-$t" | cut -d' ' -f1)"
+sha() {
+  shasum -a 256 "$1" | cut -d' ' -f1
+}
+
+# The sha256 sidecar.lock pins for the binary of target $1, or nothing when
+# the lock has no such line yet, as while it moves to a new release.
+pin() {
+  if grep -q "^binary_sha256_$1=" "$lock"; then value "binary_sha256_$1"; fi
+}
+
+# Succeeds, and prints nothing, when each binary in src-tauri/binaries is the
+# one sidecar.lock pins: each architecture's by its sha256, and the universal
+# one holding exactly those two.
+pinned() {
+  for t in $targets; do
+    [ -x "$out/residue-cli-$t" ] || return 1
+    want=$(pin "$t")
+    [ -n "$want" ] && [ "$(sha "$out/residue-cli-$t")" = "$want" ] || return 1
   done
-  printf '%s' "$line"
+  u="$out/residue-cli-universal-apple-darwin"
+  [ -x "$u" ] && [ "$(lipo -archs "$u" 2>/dev/null)" = "x86_64 arm64" ] || return 1
+  slices=$(mktemp -d)
+  ok=1
+  for pair in arm64:aarch64-apple-darwin x86_64:x86_64-apple-darwin; do
+    if ! lipo -thin "${pair%%:*}" "$u" -output "$slices/${pair%%:*}" 2>/dev/null ||
+      [ "$(sha "$slices/${pair%%:*}")" != "$(pin "${pair#*:}")" ]; then
+      ok=0
+    fi
+  done
+  rm -rf "$slices"
+  [ "$ok" = 1 ]
 }
 
 # Succeeds, and prints nothing, when .placed's first line is $1 and every
-# binary is still the file it records.
+# binary is the one sidecar.lock pins.
 kept() {
-  [ -f "$placed" ] || return 1
-  [ "$(sed -n 1p "$placed")" = "$1" ] || return 1
-  for t in $targets universal-apple-darwin; do
-    [ -x "$out/residue-cli-$t" ] || return 1
-  done
-  [ "$(sed -n 2p "$placed")" = "$(sums)" ]
+  [ -f "$placed" ] && [ "$(sed -n 1p "$placed")" = "$1" ] && pinned
 }
 
 # Install the arm64 binary $1 and the x86_64 binary $2, and join them.
@@ -103,6 +124,15 @@ case "$#:${1:-}" in
 esac
 
 [ "$(uname -s)" = Darwin ] || fail "the app builds on macOS only"
+# A commit can hold files here only through `git add -f`. A checkout would
+# then put them in place, so refuse them in every mode. Where git cannot list
+# the tree, only a local placement goes on, since it downloads and checks.
+if tracked=$(git -C "$root" ls-files -- src-tauri/binaries 2>/dev/null); then
+  [ -z "$tracked" ] ||
+    fail "git tracks files in src-tauri/binaries, which only this script fills; remove them with git rm -r --cached src-tauri/binaries"
+elif [ "$mode" != place ]; then
+  fail "git cannot list the files in $root, so this cannot check that no commit put any in src-tauri/binaries"
+fi
 # One value per assignment, so set -e stops at the first one missing.
 version=$(value version)
 sha_arm64=$(value sha256_aarch64-apple-darwin)
@@ -112,7 +142,7 @@ release="release $version $sha_arm64 $sha_x86_64"
 
 if [ "$mode" = check ]; then
   kept "$release attested" ||
-    fail "src-tauri/binaries does not hold residue-cli $version with its attestation checked; run sh scripts/sidecar.sh --require-attestation"
+    fail "src-tauri/binaries does not hold residue-cli $version as sidecar.lock pins it, with its attestation checked; run sh scripts/sidecar.sh --require-attestation"
   echo "sidecar: residue-cli $version is in src-tauri/binaries (sha256 and attestation checked)"
   exit 0
 fi
@@ -133,12 +163,14 @@ if [ -n "${RESIDUE_CLI_SOURCE:-}" ]; then
     "residue "*) ;;
     *) fail "the build from $src prints '$reported' for --version" ;;
   esac
-  printf 'source %s %s\n%s\n' "${reported#residue }" "$src" "$(sums)" > "$placed"
+  printf 'source %s %s\n' "${reported#residue }" "$src" > "$placed"
   echo "sidecar: placed $reported built from $src, not the pinned residue-cli $version"
   exit 0
 fi
 
-if kept "$release attested"; then
+# CI and the release check again whatever is placed: only a local placement
+# keeps one.
+if [ "$mode" = place ] && kept "$release attested"; then
   echo "sidecar: residue-cli $version is in src-tauri/binaries (sha256 and attestation checked)"
   exit 0
 fi
@@ -182,6 +214,12 @@ for t in $targets; do
   fi
   tar -xzf "$work/$t/$name" -C "$work/$t" "residue-$tag-$t/residue" ||
     fail "$name holds no residue-$tag-$t/residue"
+  got=$(sha "$work/$t/residue-$tag-$t/residue")
+  want=$(pin "$t")
+  [ -n "$want" ] ||
+    fail "the residue in $name has sha256 $got, and sidecar.lock has no binary_sha256_$t: set binary_sha256_$t=$got, now that the archive's checks above passed"
+  [ "$got" = "$want" ] ||
+    fail "the residue in $name has sha256 $got, and sidecar.lock pins $want (for a new release, set binary_sha256_$t=$got once the archive's checks above pass)"
 done
 
 place "$work/aarch64-apple-darwin/residue-$tag-aarch64-apple-darwin/residue" \
@@ -190,5 +228,6 @@ reported=$("$out/residue-cli-universal-apple-darwin" --version)
 [ "$reported" = "residue $version" ] ||
   fail "the release's binary prints '$reported' for --version, and sidecar.lock pins $version"
 if [ "$gh_ready" = 1 ]; then state=attested; else state=unattested; fi
-printf '%s %s\n%s\n' "$release" "$state" "$(sums)" > "$placed"
+pinned || fail "the binaries placed in src-tauri/binaries are not the ones sidecar.lock pins"
+printf '%s %s\n' "$release" "$state" > "$placed"
 echo "sidecar: placed residue-cli $version in src-tauri/binaries"

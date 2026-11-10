@@ -9,10 +9,11 @@
 # - The app's executable and its residue-cli each hold both architectures.
 # - residue-cli is the release sidecar.lock pins: `sh scripts/sidecar.sh
 #   --check` passes (the release's archives and their attestation were
-#   checked, and src-tauri/binaries still holds the binaries placed from
-#   them), it prints that version (on Apple silicon, its x86_64 slice too,
-#   where Rosetta is installed), and each architecture's UUID is that of the
-#   binary placed. Signing rewrites the signature, never the UUID.
+#   checked, no file in src-tauri/binaries is tracked by git, and each binary
+#   there has the sha256 sidecar.lock pins), it prints that version (on Apple
+#   silicon, its x86_64 slice too, where Rosetta is installed), and each
+#   architecture's UUID is that of the binary placed. Signing rewrites the
+#   signature, never the UUID.
 # - The ad-hoc signature verifies.
 set -eu
 

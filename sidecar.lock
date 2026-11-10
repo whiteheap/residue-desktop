@@ -7,9 +7,14 @@
 #   attestation: whiteheap/residue for 0.0.10 and earlier, built before the
 #   rename, and whiteheap/residue-cli after it;
 # - copy each macOS archive's checksum from that release's SHA256SUMS;
+# - set each binary_sha256 to the sha256 of the residue binary inside that
+#   archive: sh scripts/sidecar.sh --require-attestation prints it once the
+#   archive's sha256 and attestation check out;
 # - read the release's CHANGELOG entry, and update what the app says about
 #   residue's behavior in the same pull request (AGENTS.md, "Invariants").
 version=0.0.12
 attested_as=whiteheap/residue-cli
 sha256_aarch64-apple-darwin=2989452ef10e1a0ae10ca34cde40dafbb66a00c5f922269b6af84617ed65bf34
 sha256_x86_64-apple-darwin=bc67c55feb39f5eeba6059cf80cd3714547188c679e18255726b2327a9074728
+binary_sha256_aarch64-apple-darwin=1bafcaa095e3557fbddfec91a503692a6a07d72914154b68d04d8cd1e42ae57a
+binary_sha256_x86_64-apple-darwin=3de3dcf291b41378966ec261c4f63ea01edcb5510746d99db3faf802f8cf2056
