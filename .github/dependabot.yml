@@ -40,3 +40,9 @@ updates:
       packages:
         patterns: ["*"]
         update-types: [minor, patch]
+    # @types/node describes the Node that CI runs (node-version in ci.yml),
+    # so types from a newer major would accept APIs that Node lacks. Move it
+    # with node-version, by hand.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
