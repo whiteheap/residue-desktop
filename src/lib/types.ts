@@ -530,7 +530,8 @@ export type ServiceSave =
 
 /**
  * `residue watch --once --dry-run` with every option a save passes on, run by
- * the binary a save installs with. It removes nothing.
+ * the binary a save installs with. It removes no worktree, and fetches as
+ * the service does (`fetchCaveat` in `watch.ts` says what that can delete).
  */
 export interface ServicePreview {
   command: string;

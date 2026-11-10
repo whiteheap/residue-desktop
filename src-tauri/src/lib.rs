@@ -486,7 +486,8 @@ async fn service_uninstall(state: AppState<'_>) -> Result<service::Change, CliEr
 
 /// `residue watch --once --dry-run ROOT...` with every option a save keeps,
 /// run by the binary a save installs with: what automatic cleanup would
-/// remove now, fetching first as the service does. It removes nothing.
+/// remove now, fetching first as the service does. It removes no worktree;
+/// its fetch is the service's (`service::run_preview`).
 #[tauri::command]
 async fn service_preview(
     state: AppState<'_>,
