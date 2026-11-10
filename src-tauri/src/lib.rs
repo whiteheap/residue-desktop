@@ -86,13 +86,15 @@ impl State {
         .output_with(started)
     }
 
-    /// The bundled residue's version. The binary ships inside the app, so the
-    /// first read that gives a version serves every later call; an app
-    /// replaced on disk while it runs shows the old version, like its old
-    /// window, until it restarts. A failed read is not kept: the next call
-    /// runs `residue --version` again, so a passing failure (a start slower
-    /// than the deadline, a spawn the system refused) does not last until the
-    /// app quits, and a lasting one reports its own error each time.
+    /// The bundled residue's version for the window's version line. The
+    /// binary ships inside the app, so the first read that gives a version
+    /// serves every later call; an app replaced on disk while it runs shows
+    /// the old version, like its old window, until it restarts. A failed read
+    /// is not kept: the next call runs `residue --version` again, so a
+    /// passing failure (a start slower than the deadline, a spawn the system
+    /// refused) does not last until the app quits, and a lasting one reports
+    /// its own error each time. Automatic cleanup never uses it
+    /// (`bundled_version_now`).
     fn bundled_version(&self) -> Result<String, CliError> {
         // Held through the read, so calls that come together start one
         // process. A poisoned lock still holds a whole value: the one write is
@@ -101,6 +103,16 @@ impl State {
         if let Some(v) = cached.as_ref() {
             return Ok(v.clone());
         }
+        let v = self.bundled_version_now()?;
+        Ok(cached.insert(v).clone())
+    }
+
+    /// The bundled residue's version, read now. Each automatic cleanup
+    /// command reads it again: a save copies the bundled binary as it is at
+    /// that moment, and an app replaced on disk while it runs has another
+    /// release at the same path, so a version read earlier would name one
+    /// residue while the save installs another.
+    fn bundled_version_now(&self) -> Result<String, CliError> {
         let out = self.run(
             vec!["--version".into()],
             &self.home,
@@ -108,7 +120,7 @@ impl State {
         )?;
         let text = out.stdout.trim();
         match text.strip_prefix("residue ") {
-            Some(v) if out.code == Some(0) => Ok(cached.insert(v.to_string()).clone()),
+            Some(v) if out.code == Some(0) => Ok(v.to_string()),
             _ => Err(out.error(
                 ErrorKind::BadOutput,
                 format!("residue --version printed {text:?}"),
@@ -438,7 +450,7 @@ async fn stats(state: AppState<'_>) -> Result<Document, CliError> {
 #[tauri::command]
 async fn service_status(state: AppState<'_>) -> Result<service::Status, CliError> {
     blocking(&state, |s| {
-        let version = s.bundled_version()?;
+        let version = s.bundled_version_now()?;
         service::status(&s.service_context(&version), &s.dev)
     })
     .await
@@ -456,7 +468,7 @@ async fn service_install(
 ) -> Result<service::Save, CliError> {
     blocking(&state, move |s| {
         let roots = settings::folders(&roots)?;
-        let version = s.bundled_version()?;
+        let version = s.bundled_version_now()?;
         let ctx = s.service_context(&version);
         service::install(&ctx, &s.dev, &roots, dry_run, &basis)
     })
@@ -466,7 +478,7 @@ async fn service_install(
 #[tauri::command]
 async fn service_uninstall(state: AppState<'_>) -> Result<service::Change, CliError> {
     blocking(&state, |s| {
-        let version = s.bundled_version()?;
+        let version = s.bundled_version_now()?;
         service::uninstall(&s.service_context(&version), &s.dev)
     })
     .await
@@ -482,7 +494,7 @@ async fn service_preview(
 ) -> Result<service::Preview, CliError> {
     blocking(&state, move |s| {
         let roots = settings::folders(&roots)?;
-        let version = s.bundled_version()?;
+        let version = s.bundled_version_now()?;
         service::preview(&s.service_context(&version), &s.dev, &roots)
     })
     .await

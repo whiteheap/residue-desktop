@@ -39,3 +39,9 @@ ChoicesWhileBusy               save/outside      SaveIsOfTheTickedFolders
 LeaveWhileSaving               save/outside      TheDialogStaysWhileItSaves
 NoChangeGuard                  save/reload       OneChangeAtATime
 NoChangeGuard+NoExpect         save/reload       ReplacesOnlyWhatItShowed
+# save/copy: a save with the app's own copy. The copy check and --expect
+# each keep the residue a save installs to the one the dialog showed, so
+# either guard holds the rule alone.
+NoPutBack                      save/copy         FailedSaveKeepsTheResidue
+CachedVersion+NoCopyCheck      save/copy         SaveIsWhatTheDialogShowed
+NoCopyCheck+NoExpect           save/copy         SaveIsWhatTheDialogShowed

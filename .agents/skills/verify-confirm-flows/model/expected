@@ -16,3 +16,9 @@
 # or brew changing the service while a save runs, every rule holds, since
 # install passes the dialog's fingerprint to residue as --expect. Without
 # it (the NoExpect mutant), three rules break there (SKILL.md, Finding 2).
+#
+# save/copy came with the fix for Findings 3 and 4 and adds no line: a save
+# with the app's own copy puts the copy back when residue writes nothing,
+# and copies only the residue the read named, which each service command
+# reads again. The code before it (NoPutBack, CachedVersion, NoCopyCheck)
+# breaks FailedSaveKeepsTheResidue and SaveIsWhatTheDialogShowed there.

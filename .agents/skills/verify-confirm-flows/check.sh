@@ -101,7 +101,7 @@ printf '127.0.0.1 localhost %s\n' "$(hostname)" > "$work/hosts"
 # The setups. Each names its model and its constants; model/mutants names
 # them too. Bounds: two worktrees, two dialog openings, two changes outside
 # the app, and at most one fault in a behavior.
-setups="remove/no-faults remove/reload remove/draw save/outside save/during save/reload"
+setups="remove/no-faults remove/reload remove/draw save/outside save/during save/reload save/copy"
 
 module_of() {
   case $1 in
@@ -114,7 +114,7 @@ module_of() {
 rules_of() {
   case $1 in
     RemoveFlow) echo "TypeOK OnlyListedWorktreesMove ConfirmSendsTheList OpensOnlyForCanGo ListIsForYourChoice NothingMovedIsTrue OneRemovalAtATime" ;;
-    SaveFlow) echo "TypeOK SaveIsWhatTheDialogShowed ReplacesOnlyWhatItShowed NeverDropsAnArgument WarnedBeforeItDeletes PreviewIsOfTheTickedFolders SaveIsOfTheTickedFolders TheDialogStaysWhileItSaves OneChangeAtATime" ;;
+    SaveFlow) echo "TypeOK SaveIsWhatTheDialogShowed ReplacesOnlyWhatItShowed NeverDropsAnArgument FailedSaveKeepsTheResidue WarnedBeforeItDeletes PreviewIsOfTheTickedFolders SaveIsOfTheTickedFolders TheDialogStaysWhileItSaves OneChangeAtATime" ;;
   esac
 }
 
@@ -132,13 +132,13 @@ constants_of() {
     save/outside)
       printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
         'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' \
-        'DuringSave = FALSE' 'Faults = {}' ;;
+        'DuringSave = FALSE' 'Faults = {}' 'Copy = FALSE' ;;
     save/during)
       # save/outside with the changes outside the app possible at any time,
       # also between install's read and residue's write (#11).
       printf '  %s\n' 'Folders = {"A", "B"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
         'World = {"on", "off", "folders", "mode", "options", "argument", "brew"}' \
-        'DuringSave = TRUE' 'Faults = {}' ;;
+        'DuringSave = TRUE' 'Faults = {}' 'Copy = FALSE' ;;
     save/reload)
       # The window starts afresh while a save or turn-off runs: two calls of
       # the app, one of them from a dialog that is gone. Which folders they
@@ -148,7 +148,19 @@ constants_of() {
       # service only while no call of the app runs, so they add nothing here
       # but states.
       printf '  %s\n' 'Folders = {"A"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 0' \
-        'World = {}' 'DuringSave = FALSE' 'Faults = {"reload"}' ;;
+        'World = {}' 'DuringSave = FALSE' 'Faults = {"reload"}' 'Copy = FALSE' ;;
+    save/copy)
+      # A save with the app's own copy of the bundled residue, which it
+      # writes before residue runs, and a new app put in place of this one,
+      # newer or older, at any time, also while a save runs. brew does not
+      # change the bundled residue, so it is left out. Which residue a save
+      # copies and whether it goes back do not depend on the folders or the
+      # options, which save/during checks, so one folder and the changes
+      # that make residue refuse the write (on, off, mode) are enough; with
+      # two folders and every change, every rule held too, in 20,597,045
+      # states (6,715,847 distinct), against 251,579 here.
+      printf '  %s\n' 'Folders = {"A"}' 'AppRoots = {"A"}' 'MaxOpens = 2' 'MaxOutside = 2' \
+        'World = {"on", "off", "mode", "app"}' 'DuringSave = TRUE' 'Faults = {}' 'Copy = TRUE' ;;
     *) echo "check.sh: no setup $1" >&2; exit 2 ;;
   esac
 }

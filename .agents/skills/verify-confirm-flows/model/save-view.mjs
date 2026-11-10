@@ -52,6 +52,7 @@ const labels = {
   YouCancel: (f) => (f.dlg.phase === "reading" ? null : "you cancel"),
   YouLeave: () => "you go to another screen and back",
   InstallChecks: () => "residue reads the service again",
+  InstallCopies: () => "the app writes its own copy of residue",
   InstallLands: () => "residue service install writes it",
   InstallFails: () => "the save fails",
   UninstallStarts: () => "the turn-off starts",
@@ -66,6 +67,7 @@ const labels = {
   TerminalChangesOptions: () => "a terminal changes its options",
   TerminalAddsArgument: () => "a terminal adds an argument",
   BrewUpgrade: () => "brew upgrades residue",
+  AppReplaced: () => "a new app is put in place of this one",
 };
 
 export const step = (action, from) => (labels[action] ? labels[action](from) : null);
