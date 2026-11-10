@@ -145,6 +145,42 @@ describe("sidecar.sh", { skip: process.platform !== "darwin" && "the script runs
     assert.match(f.calls(), /^curl /m);
   });
 
+  // Moving to a new release: the archives check out, and the lock has no
+  // pin for the binaries yet. The script names the sha256 to pin, as
+  // CONTRIBUTING.md says. gh and curl stand in for the release: curl
+  // serves archives built here, and gh says the attestation verified.
+  test("--require-attestation prints each binary's sha256 when the lock has no pin for it", () => {
+    const f = fixture();
+    const version = "9.9.9";
+    const served = join(f.dir, "served");
+    const body = `#!/bin/sh\necho residue ${version}\n`;
+    const lock = [`version=${version}`, "attested_as=whiteheap/residue-cli"];
+    for (const t of ["aarch64-apple-darwin", "x86_64-apple-darwin"]) {
+      const inner = join(served, `residue-v${version}-${t}`);
+      mkdirSync(inner, { recursive: true });
+      writeFileSync(join(inner, "residue"), body);
+      const archive = `residue-v${version}-${t}.tar.gz`;
+      const tar = spawnSync("tar", ["-czf", archive, `residue-v${version}-${t}`], { cwd: served });
+      assert.equal(tar.status, 0);
+      lock.push(`sha256_${t}=${createHash("sha256").update(readFileSync(join(served, archive))).digest("hex")}`);
+    }
+    writeFileSync(join(f.dir, "sidecar.lock"), `${lock.join("\n")}\n`);
+    writeFileSync(
+      join(f.dir, "shims", "gh"),
+      `#!/bin/sh\ncase "$1 $2" in "auth status"|"attestation verify") exit 0 ;; esac\nexit 1\n`,
+    );
+    writeFileSync(
+      join(f.dir, "shims", "curl"),
+      `#!/bin/sh\nwhile [ "$#" -gt 1 ]; do [ "$1" = -o ] && out=$2; shift; done\ncp "${served}/\${1##*/}" "$out"\n`,
+    );
+
+    const r = f.run("--require-attestation");
+
+    const sum = createHash("sha256").update(body).digest("hex");
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, new RegExp(`no binary_sha256_aarch64-apple-darwin: set binary_sha256_aarch64-apple-darwin=${sum}`));
+  });
+
   test("--check fails where git cannot list the files", () => {
     const f = fixture({ git: false });
     const r = f.run("--check");

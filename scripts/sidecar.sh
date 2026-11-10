@@ -67,13 +67,20 @@ sha() {
   shasum -a 256 "$1" | cut -d' ' -f1
 }
 
+# The sha256 sidecar.lock pins for the binary of target $1, or nothing when
+# the lock has no such line yet, as while it moves to a new release.
+pin() {
+  if grep -q "^binary_sha256_$1=" "$lock"; then value "binary_sha256_$1"; fi
+}
+
 # Succeeds, and prints nothing, when each binary in src-tauri/binaries is the
 # one sidecar.lock pins: each architecture's by its sha256, and the universal
 # one holding exactly those two.
 pinned() {
   for t in $targets; do
     [ -x "$out/residue-cli-$t" ] || return 1
-    [ "$(sha "$out/residue-cli-$t")" = "$(value "binary_sha256_$t")" ] || return 1
+    want=$(pin "$t")
+    [ -n "$want" ] && [ "$(sha "$out/residue-cli-$t")" = "$want" ] || return 1
   done
   u="$out/residue-cli-universal-apple-darwin"
   [ -x "$u" ] && [ "$(lipo -archs "$u" 2>/dev/null)" = "x86_64 arm64" ] || return 1
@@ -81,7 +88,7 @@ pinned() {
   ok=1
   for pair in arm64:aarch64-apple-darwin x86_64:x86_64-apple-darwin; do
     if ! lipo -thin "${pair%%:*}" "$u" -output "$slices/${pair%%:*}" 2>/dev/null ||
-      [ "$(sha "$slices/${pair%%:*}")" != "$(value "binary_sha256_${pair#*:}")" ]; then
+      [ "$(sha "$slices/${pair%%:*}")" != "$(pin "${pair#*:}")" ]; then
       ok=0
     fi
   done
@@ -208,7 +215,9 @@ for t in $targets; do
   tar -xzf "$work/$t/$name" -C "$work/$t" "residue-$tag-$t/residue" ||
     fail "$name holds no residue-$tag-$t/residue"
   got=$(sha "$work/$t/residue-$tag-$t/residue")
-  want=$(value "binary_sha256_$t")
+  want=$(pin "$t")
+  [ -n "$want" ] ||
+    fail "the residue in $name has sha256 $got, and sidecar.lock has no binary_sha256_$t: set binary_sha256_$t=$got, now that the archive's checks above passed"
   [ "$got" = "$want" ] ||
     fail "the residue in $name has sha256 $got, and sidecar.lock pins $want (for a new release, set binary_sha256_$t=$got once the archive's checks above pass)"
 done
